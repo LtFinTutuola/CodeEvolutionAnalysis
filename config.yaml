@@ -1,0 +1,19 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Semantic Census Pipeline — Configuration
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Target repository settings
+repo_path: "C:\\repo\\8.2\\core"                        # Absolute path to the target enterprise C# codebase
+target_branch: "release/8.2"              # Branch to analyze (e.g., master, release/8.2)
+
+# History filter
+since_filter: "1 month ago"        # Git --since value (e.g., "12 months ago", "2024-01-01"), or "-1" for entire history
+
+# Noise gate
+noise_cutoff_threshold: 10           # Minimum changed characters to consider a modification valid
+
+# Output
+output_json_path: "output/pr_census.json"
+
+# Build settings
+target_framework: "net10.0"          # .NET target framework for the Roslyn server (e.g., net8.0, net9.0, net10.0)

@@ -1,0 +1,5 @@
+__pycache__/
+log/
+output/
+roslyn_server/
+venv/
