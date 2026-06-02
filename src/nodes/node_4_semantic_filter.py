@@ -28,21 +28,40 @@ def node_4_semantic_filter(state):
         return {"parsed_hunks": []}
 
     # ── Pass 1: Noise Filter ─────────────────────────────────────────────────
-    logger.info(f"Pass 1: Noise filter (threshold = {noise_cutoff} chars)")
+    logger.info(f"Pass 1: Noise filter (threshold = {noise_cutoff} chars, with Token-Based Semantic Cutoff)")
     after_noise = []
     noise_dropped = 0
 
     for hunk in parsed_hunks:
+        is_logical_change = hunk.get("is_logical_change", False)
         char_delta = get_diff_char_count(hunk["clean_old"], hunk["clean_new"])
+
+        # Primary check: Bypass char threshold if it's a logical change
+        if is_logical_change:
+            if char_delta < noise_cutoff:
+                logs.append(
+                    f"  COLLECTED semantic hunk (passed filter due to is_logical_change=true despite char delta {char_delta} < {noise_cutoff}): "
+                    f"{hunk['logical_object']} in commit {hunk['commit_hash']}"
+                )
+            else:
+                logs.append(
+                    f"  COLLECTED semantic hunk (logical change bypass): "
+                    f"{hunk['logical_object']} in commit {hunk['commit_hash']} (char delta = {char_delta})"
+                )
+            after_noise.append(hunk)
+            continue
+
+        # Secondary check: Fallback to character delta threshold
         if char_delta < noise_cutoff:
             noise_dropped += 1
             logs.append(
-                f"  DISCARDED semantic hunk (below noise threshold {noise_cutoff}): "
+                f"  DISCARDED semantic hunk (below noise threshold {noise_cutoff} and no logical changes): "
                 f"{hunk['logical_object']} in commit {hunk['commit_hash']} (char delta = {char_delta})"
             )
             continue
+
         logs.append(
-            f"  COLLECTED semantic hunk (survived noise filter): "
+            f"  COLLECTED semantic hunk (survived fallback noise filter): "
             f"{hunk['logical_object']} in commit {hunk['commit_hash']} (char delta = {char_delta})"
         )
         after_noise.append(hunk)

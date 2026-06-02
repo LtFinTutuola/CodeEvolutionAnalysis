@@ -70,6 +70,7 @@ def node_3_roslyn_parser(state):
                 "parent_signature": parent_signature,
                 "clean_old": clean_old,
                 "clean_new": clean_new,
+                "is_logical_change": result.get("is_logical_change", False),
             })
 
     logger.info(
