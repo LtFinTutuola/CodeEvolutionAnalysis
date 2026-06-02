@@ -3,3 +3,6 @@ log/
 output/
 roslyn_server/
 venv/
+test_roslyn_proj/
+config.yaml
+requirements.txt
