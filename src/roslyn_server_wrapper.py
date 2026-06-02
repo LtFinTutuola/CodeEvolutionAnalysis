@@ -152,7 +152,7 @@ class RoslynServerWrapper:
         old_lns_str = ",".join(map(str, old_lns))
         new_lns_str = ",".join(map(str, new_lns))
         header = f"CENSUS_EXTRACT|||{old_lns_str}|||{new_lns_str}"
-        combined_code = f"{old_code}\n---DELIMITER---\n{new_code}"
+        combined_code = f"{old_code}\n---DELIMITER---\n{new_code}".replace("\r", "")
 
         res = self._send_command(header, combined_code)
         try:

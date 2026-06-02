@@ -26,6 +26,7 @@ def node_2_git_extractor(state):
 
     batcher = get_git_batcher(repo_path)
     raw_diffs = []
+    logs = state.get("extraction_logs", [])
 
     for i, commit_hash in enumerate(commits):
         if i % 100 == 0 and i > 0:
@@ -41,6 +42,14 @@ def node_2_git_extractor(state):
             f'git show -s --format=%ci {commit_hash}', cwd=repo_path, check=False
         )
 
+        # Get commit description (subject/title)
+        commit_desc = execute_git(
+            f'git show -s --format=%s {commit_hash}', cwd=repo_path, check=False
+        )
+        commit_desc = commit_desc.strip() if commit_desc else "No description"
+
+        logs.append(f"COMMIT PROCESSING: hash={commit_hash}, date={commit_date}, desc='{commit_desc}'")
+
         # List C# files with substantive changes (ignoring whitespace-only diffs)
         diff_cmd = (
             f"git diff -w --ignore-blank-lines --name-only "
@@ -48,42 +57,55 @@ def node_2_git_extractor(state):
         )
         changed_files_output = execute_git(diff_cmd, cwd=repo_path, check=False)
         if not changed_files_output:
+            logs.append(f"  COMMIT {commit_hash}: No changed files found.")
             continue
 
-        changed_files = [
-            f.strip()
-            for f in changed_files_output.splitlines()
-            if f.strip().endswith(".cs")
-        ]
+        all_changed_files = [f.strip() for f in changed_files_output.splitlines() if f.strip()]
+        
+        # Log all non-C# files or non-interesting files if needed, but specifically C# files are the targets
+        csharp_files = [f for f in all_changed_files if f.endswith(".cs")]
+        
+        for f in all_changed_files:
+            if not f.endswith(".cs"):
+                # Non C# files are not parsed
+                pass
 
         # Filter out auto-generated files, tests, designers
-        changed_files = [
-            f for f in changed_files
-            if not _is_excluded_file(f)
-        ]
+        valid_files = []
+        for f in csharp_files:
+            if _is_excluded_file(f):
+                logs.append(f"  DISCARDED file (excluded): {f}")
+            else:
+                valid_files.append(f)
 
-        if not changed_files:
+        if not valid_files:
+            logs.append(f"  COMMIT {commit_hash}: No valid C# files after exclusions.")
             continue
 
-        for filepath in changed_files:
+        for filepath in valid_files:
             # Load raw blobs via the persistent git cat-file process
             old_text = batcher.get_file_content(parent_hash, filepath) if parent_hash else ""
             new_text = batcher.get_file_content(commit_hash, filepath)
 
             if not old_text and not new_text:
+                logs.append(f"  DISCARDED file (no content): {filepath}")
                 continue
             if old_text == new_text:
+                logs.append(f"  DISCARDED file (no C# changes - identical texts): {filepath}")
                 continue
 
             # Compute exact changed line numbers
             old_lines, new_lines = get_changed_line_numbers(old_text, new_text)
 
             if not old_lines and not new_lines:
+                logs.append(f"  DISCARDED file (no changed line coordinates): {filepath}")
                 continue
 
+            logs.append(f"  COLLECTED file: {filepath}")
             raw_diffs.append({
                 "commit_hash": commit_hash,
                 "commit_date": commit_date,
+                "commit_description": commit_desc,
                 "file_path": filepath,
                 "old_text": old_text,
                 "new_text": new_text,
@@ -94,7 +116,10 @@ def node_2_git_extractor(state):
     logger.info(f"Extracted {len(raw_diffs)} raw diff payloads from {len(commits)} commits.")
     logger.info("Node 2 Finished.")
 
-    return {"raw_diffs": raw_diffs}
+    return {
+        "raw_diffs": raw_diffs,
+        "extraction_logs": logs,
+    }
 
 
 def _is_excluded_file(filepath: str) -> bool:

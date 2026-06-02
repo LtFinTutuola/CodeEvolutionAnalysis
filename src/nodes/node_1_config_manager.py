@@ -53,10 +53,10 @@ def node_1_config_manager(state):
     execute_git("git reset --hard HEAD", cwd=repo_path, check=True)
     execute_git("git clean -fd", cwd=repo_path, check=True)
 
-    # Checkout target branch
-    logger.info("Skipping remote operations (fetch/pull) to run strictly offline...")
-    logger.info(f"Checking out branch: {target_branch}")
+    # Checkout target branch and update it
+    logger.info(f"Checking out and pulling latest changes for branch: {target_branch}")
     execute_git(f"git checkout {target_branch}", cwd=repo_path, check=True)
+    execute_git(f"git pull origin {target_branch}", cwd=repo_path, check=True)
 
     # ── Collect commit hashes ────────────────────────────────────────────────
     since_flag = ""
@@ -69,10 +69,13 @@ def node_1_config_manager(state):
 
     commits = [h.strip().strip('"') for h in log_output.splitlines() if h.strip()]
 
-    logger.info(f"Collected {len(commits)} commits to process.")
-    logger.info("Node 1 Finished.")
+    logs = [
+        f"CONFIG LOADED: repo_path={repo_path}, target_branch={target_branch}, since_filter={since_filter}",
+        f"COLLECTED {len(commits)} commits to process."
+    ]
 
     return {
         "config": config,
         "commits_to_process": commits,
+        "extraction_logs": logs,
     }

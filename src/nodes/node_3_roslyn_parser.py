@@ -26,6 +26,7 @@ def node_3_roslyn_parser(state):
 
     server = get_roslyn_server(target_framework)
     parsed_hunks = []
+    logs = state.get("extraction_logs", [])
 
     for i, diff_entry in enumerate(raw_diffs):
         if i % 50 == 0 and i > 0:
@@ -33,6 +34,7 @@ def node_3_roslyn_parser(state):
 
         commit_hash = diff_entry["commit_hash"]
         commit_date = diff_entry["commit_date"]
+        commit_desc = diff_entry.get("commit_description", "No description")
         file_path = diff_entry["file_path"]
         old_text = diff_entry["old_text"]
         new_text = diff_entry["new_text"]
@@ -42,21 +44,29 @@ def node_3_roslyn_parser(state):
         # Send to Roslyn server for semantic extraction
         census_results = server.census_extract(old_text, new_text, old_lines, new_lines)
 
+        if not census_results:
+            logs.append(f"  DISCARDED file content in Roslyn mapping (no C# AST matches): {file_path}")
+            continue
+
         for result in census_results:
-            signature = result.get("signature", "")
+            logical_object = result.get("signature", "")
             parent_signature = result.get("parent_signature", "")
             clean_old = result.get("sanitized_old_code", "")
             clean_new = result.get("sanitized_new_code", "")
 
             # Skip entries where Roslyn couldn't resolve a signature
-            if not signature:
+            if not logical_object:
+                logs.append(f"  DISCARDED semantic hunk (missing signature): in {file_path}")
                 continue
 
+            logs.append(f"  COLLECTED semantic hunk: {logical_object} (parent: {parent_signature})")
             parsed_hunks.append({
                 "commit_hash": commit_hash,
                 "commit_date": commit_date,
+                "commit_description": commit_desc,
                 "file_path": file_path,
-                "signature": signature,
+                "full_signature": result.get("full_signature", ""),
+                "logical_object": logical_object,
                 "parent_signature": parent_signature,
                 "clean_old": clean_old,
                 "clean_new": clean_new,
@@ -67,4 +77,7 @@ def node_3_roslyn_parser(state):
     )
     logger.info("Node 3 Finished.")
 
-    return {"parsed_hunks": parsed_hunks}
+    return {
+        "parsed_hunks": parsed_hunks,
+        "extraction_logs": logs,
+    }

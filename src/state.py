@@ -20,23 +20,22 @@ class AgentState(TypedDict):
     raw_diffs: List[Dict[str, Any]]
 
     # Semantic nodes returned by the Roslyn parser.
-    # Each entry: {commit_hash, commit_date, file_path, signature, parent_signature,
+    # Each entry: {commit_hash, commit_date, commit_description, file_path, signature, parent_signature,
     #              clean_old, clean_new, added_lines, removed_lines}
     parsed_hunks: List[Dict[str, Any]]
 
-    # Global census dictionary aggregating statistics grouped by classes and methods.
-    # Structure: {
-    #   "Namespace.ClassName": {
-    #       "hit_count": int,
-    #       "methods": {
-    #           "Namespace.ClassName.MethodName(Args)": {
-    #               "hit_count": int,
-    #               "first_seen_date": str,
-    #               "history": [
-    #                   {"date": str, "commit_hash": str, "added_lines": int, "removed_lines": int}
-    #               ]
-    #           }
-    #       }
-    #   }
+    # Flat census entries at logical object level.
+    # Each entry is structured as follows:
+    # {
+    #   "commit_description": str,
+    #   "commit_hash": str,
+    #   "commit_date": str,
+    #   "logical_object": str,
+    #   "parent_object": str,
+    #   "added_lines": int,
+    #   "removed_lines": int
     # }
-    census_dictionary: Dict[str, Any]
+    census_entries: List[Dict[str, Any]]
+
+    # Detailed logs reporting the collecting and discarding operations.
+    extraction_logs: List[str]

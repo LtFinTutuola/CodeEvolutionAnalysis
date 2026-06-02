@@ -20,7 +20,8 @@ def main():
         "commits_to_process": [],
         "raw_diffs": [],
         "parsed_hunks": [],
-        "census_dictionary": {},
+        "census_entries": [],
+        "extraction_logs": [],
     }
 
     try:
