@@ -4,5 +4,6 @@ output/
 roslyn_server/
 venv/
 test_roslyn_proj/
+cache/
 config.yaml
 requirements.txt

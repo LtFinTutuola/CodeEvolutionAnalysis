@@ -17,6 +17,7 @@ def main():
     # Initial state: all fields empty. Node 1 will populate config & commits.
     initial_state = {
         "config": {},
+        "baseline_objects": [],
         "commits_to_process": [],
         "raw_diffs": [],
         "parsed_hunks": [],

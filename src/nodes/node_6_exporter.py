@@ -30,7 +30,7 @@ def node_6_exporter(state):
 
     # ── Timestamped Filenames ────────────────────────────────────────────────
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    census_filename = f"{timestamp}_pr_census.json"
+    census_filename = f"{timestamp}_code_mapping.json"
     log_filename = f"{timestamp}_log.txt"
 
     final_census_path = os.path.join(output_dir, census_filename)

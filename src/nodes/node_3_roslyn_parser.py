@@ -68,6 +68,7 @@ def node_3_roslyn_parser(state):
                 "full_signature": result.get("full_signature", ""),
                 "logical_object": logical_object,
                 "parent_signature": parent_signature,
+                "parent_object": parent_signature,
                 "clean_old": clean_old,
                 "clean_new": clean_new,
                 "is_logical_change": result.get("is_logical_change", False),

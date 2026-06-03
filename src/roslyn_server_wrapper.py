@@ -161,6 +161,21 @@ class RoslynServerWrapper:
             logger.error(f"Failed to parse Roslyn JSON: {e}. Response: {res[:200]}...")
             return []
 
+    def baseline_extract(self, code: str) -> List[Dict]:
+        """
+        Send a BASELINE_EXTRACT command to the Roslyn server.
+        Returns a list of dicts, each containing:
+        - signature: Fully qualified method/property signature
+        - parent_signature: Fully qualified class signature
+        """
+        header = "BASELINE_EXTRACT|||"
+        res = self._send_command(header, code)
+        try:
+            return json.loads(res) if res else []
+        except Exception as e:
+            logger.error(f"Failed to parse Roslyn JSON: {e}. Response: {res[:200]}...")
+            return []
+
     def stop(self):
         """Terminate the Roslyn server process."""
         if self.process:

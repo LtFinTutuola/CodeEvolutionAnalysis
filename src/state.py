@@ -12,6 +12,9 @@ class AgentState(TypedDict):
     # Loaded configuration parameters from config.yaml
     config: Dict[str, Any]
 
+    # The flat baseline of all logical objects currently alive in the repository
+    baseline_objects: List[Dict[str, Any]]
+
     # Chronologically ordered list of commit hashes to analyze
     commits_to_process: List[str]
 
