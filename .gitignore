@@ -1,7 +1,8 @@
 __pycache__/
 log/
 output/
-roslyn_server/
+roslyn_server/bin/
+roslyn_server/obj/
 venv/
 test_roslyn_proj/
 cache/
