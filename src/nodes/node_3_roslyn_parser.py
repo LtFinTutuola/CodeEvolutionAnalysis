@@ -72,6 +72,7 @@ def node_3_roslyn_parser(state):
                 "clean_old": clean_old,
                 "clean_new": clean_new,
                 "is_logical_change": result.get("is_logical_change", False),
+                "diff_score": result.get("diff_score", 0.0),
             })
 
     logger.info(

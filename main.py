@@ -22,6 +22,8 @@ def main():
         "raw_diffs": [],
         "parsed_hunks": [],
         "census_entries": [],
+        "repo_first_commit_date": "",
+        "repo_last_commit_date": "",
         "extraction_logs": [],
     }
 

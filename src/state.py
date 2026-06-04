@@ -40,5 +40,11 @@ class AgentState(TypedDict):
     # }
     census_entries: List[Dict[str, Any]]
 
+    # Absolute date of the repository's very first commit (ISO format string)
+    repo_first_commit_date: str
+
+    # Absolute date of the repository's most recent commit (ISO format string)
+    repo_last_commit_date: str
+
     # Detailed logs reporting the collecting and discarding operations.
     extraction_logs: List[str]

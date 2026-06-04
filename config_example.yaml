@@ -12,6 +12,10 @@ since_filter: ""        # Git --since value (e.g., "12 months ago", "2024-01-01"
 # Noise gate
 noise_cutoff_threshold: 0           # Minimum changed characters to consider a modification valid
 
+# Impact scoring (Time Decay weights for ML tuning)
+weight_full_lifespan: 0.7            # Weight of commit age relative to repo's entire lifespan [0,1]
+weight_object_lifespan: 0.3          # Weight of commit age relative to method's creation date [0,1]
+
 # Output
 output_json_path: ""
 

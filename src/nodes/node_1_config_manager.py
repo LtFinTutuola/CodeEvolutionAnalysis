@@ -69,13 +69,32 @@ def node_1_config_manager(state):
 
     commits = [h.strip().strip('"') for h in log_output.splitlines() if h.strip()]
 
+    # ── Calculate repository temporal boundaries ─────────────────────────────
+    # These are the absolute first and last commit dates across the entire repo
+    # (not filtered by since_filter), used for Time Decay calculations.
+    repo_first_commit_date = execute_git(
+        f'git log --reverse --format="%ci" {target_branch}',
+        cwd=repo_path, check=True
+    ).splitlines()[0].strip().strip('"') if commits else ""
+
+    repo_last_commit_date = execute_git(
+        f'git log --format="%ci" -1 {target_branch}',
+        cwd=repo_path, check=True
+    ).strip().strip('"') if commits else ""
+
+    logger.info(f"Repo First Commit: {repo_first_commit_date}")
+    logger.info(f"Repo Last Commit : {repo_last_commit_date}")
+
     logs = [
         f"CONFIG LOADED: repo_path={repo_path}, target_branch={target_branch}, since_filter={since_filter}",
-        f"COLLECTED {len(commits)} commits to process."
+        f"COLLECTED {len(commits)} commits to process.",
+        f"REPO TEMPORAL BOUNDARIES: first={repo_first_commit_date}, last={repo_last_commit_date}"
     ]
 
     return {
         "config": config,
         "commits_to_process": commits,
+        "repo_first_commit_date": repo_first_commit_date,
+        "repo_last_commit_date": repo_last_commit_date,
         "extraction_logs": logs,
     }

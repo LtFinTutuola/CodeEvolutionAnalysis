@@ -27,63 +27,19 @@ def node_4_semantic_filter(state):
         logger.warning("No parsed hunks to filter.")
         return {"parsed_hunks": []}
 
-    # ── Pass 1: Noise Filter ─────────────────────────────────────────────────
-    logger.info(f"Pass 1: Noise filter (threshold = {noise_cutoff} chars, with Token-Based Semantic Cutoff)")
-    after_noise = []
-    noise_dropped = 0
-
+    # ── Pass 1: Net Lines Calculation ────────────────────────────────────────
+    logger.info("Pass 1: Calculating net added/removed lines")
     for hunk in parsed_hunks:
-        is_logical_change = hunk.get("is_logical_change", False)
-        char_delta = get_diff_char_count(hunk["clean_old"], hunk["clean_new"])
-
-        # Primary check: Bypass char threshold if it's a logical change
-        if is_logical_change:
-            if char_delta < noise_cutoff:
-                logs.append(
-                    f"  COLLECTED semantic hunk (passed filter due to is_logical_change=true despite char delta {char_delta} < {noise_cutoff}): "
-                    f"{hunk['logical_object']} in commit {hunk['commit_hash']}"
-                )
-            else:
-                logs.append(
-                    f"  COLLECTED semantic hunk (logical change bypass): "
-                    f"{hunk['logical_object']} in commit {hunk['commit_hash']} (char delta = {char_delta})"
-                )
-            after_noise.append(hunk)
-            continue
-
-        # Secondary check: Fallback to character delta threshold
-        if char_delta < noise_cutoff:
-            noise_dropped += 1
-            logs.append(
-                f"  DISCARDED semantic hunk (below noise threshold {noise_cutoff} and no logical changes): "
-                f"{hunk['logical_object']} in commit {hunk['commit_hash']} (char delta = {char_delta})"
-            )
-            continue
-
-        logs.append(
-            f"  COLLECTED semantic hunk (survived fallback noise filter): "
-            f"{hunk['logical_object']} in commit {hunk['commit_hash']} (char delta = {char_delta})"
-        )
-        after_noise.append(hunk)
-
-    logger.info(
-        f"  Noise filter: {noise_dropped} hunks dropped, "
-        f"{len(after_noise)} surviving."
-    )
-
-    # ── Pass 2: Net Lines Calculation ────────────────────────────────────────
-    logger.info("Pass 2: Calculating net added/removed lines")
-    for hunk in after_noise:
         added, removed = calculate_net_lines(hunk["clean_old"], hunk["clean_new"])
         hunk["added_lines"] = added
         hunk["removed_lines"] = removed
 
-    # ── Pass 3: Move Detection (Anti-Move) ───────────────────────────────────
-    logger.info("Pass 3: Move detection (within same commit boundary)")
+    # ── Pass 2: Move Detection (Anti-Move) ───────────────────────────────────
+    logger.info("Pass 2: Move detection (within same commit boundary)")
 
     # Group hunks by commit_hash
     by_commit = defaultdict(list)
-    for hunk in after_noise:
+    for hunk in parsed_hunks:
         by_commit[hunk["commit_hash"]].append(hunk)
 
     final_hunks = []
