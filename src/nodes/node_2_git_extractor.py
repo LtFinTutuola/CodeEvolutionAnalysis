@@ -36,6 +36,14 @@ def node_2_git_extractor(state):
         parent_hash = execute_git(
             f'git rev-parse "{commit_hash}~1"', cwd=repo_path, check=False
         )
+        if parent_hash:
+            parent_hash = parent_hash.strip()
+
+        # Skip merge commits
+        parents_output = execute_git(f'git rev-list --parents -n 1 {commit_hash}', cwd=repo_path, check=False)
+        if parents_output and len(parents_output.strip().split()) > 2:
+            logs.append(f"  COMMIT {commit_hash}: Skipped (merge commit).")
+            continue
 
         # Get commit date for history tracking
         commit_date = execute_git(
@@ -51,8 +59,9 @@ def node_2_git_extractor(state):
         logs.append(f"COMMIT PROCESSING: hash={commit_hash}, date={commit_date}, desc='{commit_desc}'")
 
         # List C# files with substantive changes (ignoring whitespace-only diffs)
+        # Use -M to detect renames
         diff_cmd = (
-            f"git diff -w --ignore-blank-lines --name-only "
+            f"git diff -w --ignore-blank-lines --name-status -M "
             f"{parent_hash + '..' if parent_hash else ''}{commit_hash}"
         )
         changed_files_output = execute_git(diff_cmd, cwd=repo_path, check=False)
@@ -60,53 +69,70 @@ def node_2_git_extractor(state):
             logs.append(f"  COMMIT {commit_hash}: No changed files found.")
             continue
 
-        all_changed_files = [f.strip() for f in changed_files_output.splitlines() if f.strip()]
-        
-        # Log all non-C# files or non-interesting files if needed, but specifically C# files are the targets
-        csharp_files = [f for f in all_changed_files if f.endswith(".cs")]
-        
-        for f in all_changed_files:
-            if not f.endswith(".cs"):
-                # Non C# files are not parsed
-                pass
-
-        # Filter out auto-generated files, tests, designers
-        valid_files = []
-        for f in csharp_files:
-            if _is_excluded_file(f):
-                logs.append(f"  DISCARDED file (excluded): {f}")
+        file_entries = [] # List of tuples (old_path, new_path)
+        for line in changed_files_output.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split('\t')
+            status = parts[0]
+            
+            if status.startswith('R') or status.startswith('C'):
+                old_path = parts[1]
+                new_path = parts[2]
+                file_entries.append((old_path, new_path))
+            elif status.startswith('A'):
+                file_entries.append((None, parts[1]))
+            elif status.startswith('D'):
+                file_entries.append((parts[1], None))
             else:
-                valid_files.append(f)
+                file_entries.append((parts[1], parts[1]))
 
-        if not valid_files:
+        valid_entries = []
+        for old_path, new_path in file_entries:
+            check_path = new_path if new_path else old_path
+            
+            if not check_path.endswith(".cs"):
+                continue
+                
+            if _is_excluded_file(check_path):
+                logs.append(f"  DISCARDED file (excluded): {check_path}")
+            else:
+                valid_entries.append((old_path, new_path))
+
+        if not valid_entries:
             logs.append(f"  COMMIT {commit_hash}: No valid C# files after exclusions.")
             continue
 
-        for filepath in valid_files:
+        for old_path, new_path in valid_entries:
             # Load raw blobs via the persistent git cat-file process
-            old_text = batcher.get_file_content(parent_hash, filepath) if parent_hash else ""
-            new_text = batcher.get_file_content(commit_hash, filepath)
+            old_text = ""
+            new_text = ""
+            if parent_hash and old_path:
+                old_text = batcher.get_file_content(parent_hash, old_path)
+            if new_path:
+                new_text = batcher.get_file_content(commit_hash, new_path)
 
             if not old_text and not new_text:
-                logs.append(f"  DISCARDED file (no content): {filepath}")
+                logs.append(f"  DISCARDED file (no content): {new_path or old_path}")
                 continue
             if old_text == new_text:
-                logs.append(f"  DISCARDED file (no C# changes - identical texts): {filepath}")
+                logs.append(f"  DISCARDED file (no C# changes - identical texts): {new_path or old_path}")
                 continue
 
             # Compute exact changed line numbers
             old_lines, new_lines = get_changed_line_numbers(old_text, new_text)
 
             if not old_lines and not new_lines:
-                logs.append(f"  DISCARDED file (no changed line coordinates): {filepath}")
+                logs.append(f"  DISCARDED file (no changed line coordinates): {new_path or old_path}")
                 continue
 
-            logs.append(f"  COLLECTED file: {filepath}")
+            logs.append(f"  COLLECTED file: {new_path or old_path}")
             raw_diffs.append({
                 "commit_hash": commit_hash,
                 "commit_date": commit_date,
                 "commit_description": commit_desc,
-                "file_path": filepath,
+                "file_path": new_path or old_path,
                 "old_text": old_text,
                 "new_text": new_text,
                 "old_lines": old_lines,

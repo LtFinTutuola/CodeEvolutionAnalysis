@@ -31,8 +31,8 @@ namespace SemanticMapper
             {
                 string? part = current switch
                 {
-                    MethodDeclarationSyntax m => $"{m.Identifier.Text}{m.TypeParameterList}({string.Join(",", m.ParameterList.Parameters.Select(p => p.Type?.ToString()))})",
-                    PropertyDeclarationSyntax p => p.Identifier.Text,
+                    MethodDeclarationSyntax m => $"{(m.ExplicitInterfaceSpecifier != null ? m.ExplicitInterfaceSpecifier.Name.ToString() + "." : "")}{m.Identifier.Text}{m.TypeParameterList}({string.Join(",", m.ParameterList.Parameters.Select(p => p.Type?.ToString()))})",
+                    PropertyDeclarationSyntax p => $"{(p.ExplicitInterfaceSpecifier != null ? p.ExplicitInterfaceSpecifier.Name.ToString() + "." : "")}{p.Identifier.Text}",
                     ConstructorDeclarationSyntax c => $"Constructor({string.Join(",", c.ParameterList.Parameters.Select(p => p.Type?.ToString()))})",
                     FieldDeclarationSyntax f => f.Declaration.Variables.First().Identifier.Text,
                     ClassDeclarationSyntax cls => $"{cls.Identifier.Text}{cls.TypeParameterList}",
@@ -799,8 +799,8 @@ namespace SemanticMapper
             return node switch
             {
                 MethodDeclarationSyntax m =>
-                    $"method:{m.Identifier.Text}{m.TypeParameterList}({string.Join(",", m.ParameterList.Parameters.Select(p => p.Type?.ToString()))})",
-                PropertyDeclarationSyntax p => $"prop:{p.Identifier.Text}",
+                    $"method:{(m.ExplicitInterfaceSpecifier != null ? m.ExplicitInterfaceSpecifier.Name.ToString() + "." : "")}{m.Identifier.Text}{m.TypeParameterList}({string.Join(",", m.ParameterList.Parameters.Select(p => p.Type?.ToString()))})",
+                PropertyDeclarationSyntax p => $"prop:{(p.ExplicitInterfaceSpecifier != null ? p.ExplicitInterfaceSpecifier.Name.ToString() + "." : "")}{p.Identifier.Text}",
                 ConstructorDeclarationSyntax c =>
                     $"ctor:({string.Join(",", c.ParameterList.Parameters.Select(p => p.Type?.ToString()))})",
                 FieldDeclarationSyntax f => $"field:{f.Declaration.Variables.First().Identifier.Text}",
