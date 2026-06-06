@@ -122,6 +122,27 @@ def node_5_mapper(state):
         parent_obj = hunk["parent_object"]
         diff_score = hunk.get("diff_score", 0.0)
 
+        # ── Apply Signature Change scoring ───────────────────────
+        if hunk.get("is_signature_change", False):
+            diff_score = config.get("signature_changed_diff_score", 0.10)
+        # ── Apply Auto-Calibration for Added/Removed methods ─────────
+        elif hunk.get("is_new_or_dead", False):
+            obj_type = hunk.get("object_type", "method")
+            min_scores = config.get("min_creation_scores", {})
+            base_score = float(min_scores.get(obj_type, 0.05))
+            
+            if obj_type == "field":
+                diff_score = base_score
+            else:
+                threshold_key = f"max_{obj_type}_threshold"
+                specific_threshold = config.get(threshold_key, 17.0)
+                
+                raw_score = hunk.get("raw_complexity_score", 0)
+                scale_factor = min(1.0, float(raw_score) / max(1.0, float(specific_threshold)))
+                
+                diff_score = base_score + (scale_factor * (1.0 - base_score))
+
+
         # Ensure the project field is resolved dynamically
         project = get_project_name(file_path, repo_path)
 

@@ -31,13 +31,14 @@ namespace SemanticMapper
             {
                 string? part = current switch
                 {
-                    MethodDeclarationSyntax m => m.Identifier.Text,
+                    MethodDeclarationSyntax m => $"{m.Identifier.Text}{m.TypeParameterList}({string.Join(",", m.ParameterList.Parameters.Select(p => p.Type?.ToString()))})",
                     PropertyDeclarationSyntax p => p.Identifier.Text,
-                    ConstructorDeclarationSyntax c => "Constructor",
-                    ClassDeclarationSyntax cls => cls.Identifier.Text,
-                    StructDeclarationSyntax s => s.Identifier.Text,
-                    RecordDeclarationSyntax r => r.Identifier.Text,
-                    InterfaceDeclarationSyntax i => i.Identifier.Text,
+                    ConstructorDeclarationSyntax c => $"Constructor({string.Join(",", c.ParameterList.Parameters.Select(p => p.Type?.ToString()))})",
+                    FieldDeclarationSyntax f => f.Declaration.Variables.First().Identifier.Text,
+                    ClassDeclarationSyntax cls => $"{cls.Identifier.Text}{cls.TypeParameterList}",
+                    StructDeclarationSyntax s => $"{s.Identifier.Text}{s.TypeParameterList}",
+                    RecordDeclarationSyntax r => $"{r.Identifier.Text}{r.TypeParameterList}",
+                    InterfaceDeclarationSyntax i => $"{i.Identifier.Text}{i.TypeParameterList}",
                     NamespaceDeclarationSyntax ns => ns.Name.ToString(),
                     FileScopedNamespaceDeclarationSyntax fns => fns.Name.ToString(),
                     _ => null
@@ -77,6 +78,7 @@ namespace SemanticMapper
                 MethodDeclarationSyntax m => $"{m.Modifiers} {m.ReturnType} {m.Identifier}{m.ParameterList}".Trim(),
                 PropertyDeclarationSyntax p => $"{p.Modifiers} {p.Type} {p.Identifier} {GetAccessors(p)}".Trim(),
                 ConstructorDeclarationSyntax c => $"{c.Modifiers} {c.Identifier}{c.ParameterList}".Trim(),
+                FieldDeclarationSyntax f => $"{f.Modifiers} {f.Declaration}".Trim(),
                 ClassDeclarationSyntax c => $"{c.Modifiers} class {c.Identifier}".Trim(),
                 StructDeclarationSyntax s => $"{s.Modifiers} struct {s.Identifier}".Trim(),
                 RecordDeclarationSyntax r => $"{r.Modifiers} record {r.Identifier}".Trim(),
@@ -634,6 +636,47 @@ namespace SemanticMapper
             return Math.Min(1.0, Math.Max(0.0, score));
         }
 
+        // ── Cognitive Complexity ─────────────────────────────────────────────
+
+        private class CognitiveComplexityWalker : CSharpSyntaxWalker
+        {
+            public int Score { get; private set; } = 0;
+
+            public override void VisitVariableDeclaration(VariableDeclarationSyntax node) { Score += 1; base.VisitVariableDeclaration(node); }
+            public override void VisitAssignmentExpression(AssignmentExpressionSyntax node) { Score += 1; base.VisitAssignmentExpression(node); }
+            public override void VisitReturnStatement(ReturnStatementSyntax node) { Score += 1; base.VisitReturnStatement(node); }
+            
+            public override void VisitInvocationExpression(InvocationExpressionSyntax node) { Score += 2; base.VisitInvocationExpression(node); }
+            public override void VisitObjectCreationExpression(ObjectCreationExpressionSyntax node) { Score += 2; base.VisitObjectCreationExpression(node); }
+
+            public override void VisitIfStatement(IfStatementSyntax node) { Score += 3; base.VisitIfStatement(node); }
+            public override void VisitForStatement(ForStatementSyntax node) { Score += 3; base.VisitForStatement(node); }
+            public override void VisitWhileStatement(WhileStatementSyntax node) { Score += 3; base.VisitWhileStatement(node); }
+            public override void VisitSwitchSection(SwitchSectionSyntax node) { Score += 3; base.VisitSwitchSection(node); }
+            public override void VisitCatchClause(CatchClauseSyntax node) { Score += 3; base.VisitCatchClause(node); }
+        }
+
+        private static int CalculateCognitiveComplexity(SyntaxNode? node)
+        {
+            if (node == null) return 0;
+            if (node is FieldDeclarationSyntax) return 0; // Short-circuit for fields
+            var walker = new CognitiveComplexityWalker();
+            walker.Visit(node);
+            return walker.Score;
+        }
+
+        private static string GetObjectType(SyntaxNode node)
+        {
+            return node switch
+            {
+                FieldDeclarationSyntax _ => "field",
+                PropertyDeclarationSyntax _ => "property",
+                ConstructorDeclarationSyntax _ => "constructor",
+                MethodDeclarationSyntax _ => "method",
+                _ => "method"
+            };
+        }
+
         // ── Semantic Token Extraction ────────────────────────────────────────
 
         private static readonly HashSet<SyntaxKind> LogicalTokenKinds = new HashSet<SyntaxKind>
@@ -713,6 +756,7 @@ namespace SemanticMapper
                        !(node is MethodDeclarationSyntax) &&
                        !(node is PropertyDeclarationSyntax) &&
                        !(node is ConstructorDeclarationSyntax) &&
+                       !(node is FieldDeclarationSyntax) &&
                        !(node is ClassDeclarationSyntax))
                 {
                     node = node.Parent;
@@ -727,7 +771,8 @@ namespace SemanticMapper
                         {
                             if ((member is MethodDeclarationSyntax ||
                                  member is PropertyDeclarationSyntax ||
-                                 member is ConstructorDeclarationSyntax) &&
+                                 member is ConstructorDeclarationSyntax ||
+                                 member is FieldDeclarationSyntax) &&
                                 member.Span.IntersectsWith(line.Span))
                             {
                                 semanticNodes.Add(member);
@@ -754,12 +799,95 @@ namespace SemanticMapper
             return node switch
             {
                 MethodDeclarationSyntax m =>
-                    $"method:{m.Identifier.Text}({string.Join(",", m.ParameterList.Parameters.Select(p => p.Type?.ToString()))})",
+                    $"method:{m.Identifier.Text}{m.TypeParameterList}({string.Join(",", m.ParameterList.Parameters.Select(p => p.Type?.ToString()))})",
                 PropertyDeclarationSyntax p => $"prop:{p.Identifier.Text}",
                 ConstructorDeclarationSyntax c =>
                     $"ctor:({string.Join(",", c.ParameterList.Parameters.Select(p => p.Type?.ToString()))})",
+                FieldDeclarationSyntax f => $"field:{f.Declaration.Variables.First().Identifier.Text}",
                 _ => node.ToString().Substring(0, Math.Min(50, node.ToString().Length))
             };
+        }
+
+        // ── Signature Change Detection ──────────────────────────────────────
+
+        /// <summary>
+        /// Find the immediate parent type declaration (class/struct/record/interface) of a node.
+        /// </summary>
+        private static SyntaxNode? FindParentTypeDeclaration(SyntaxNode node)
+        {
+            var parent = node.Parent;
+            while (parent != null &&
+                   !(parent is ClassDeclarationSyntax) &&
+                   !(parent is StructDeclarationSyntax) &&
+                   !(parent is RecordDeclarationSyntax) &&
+                   !(parent is InterfaceDeclarationSyntax))
+            {
+                parent = parent.Parent;
+            }
+            return parent;
+        }
+
+        /// <summary>
+        /// Find a matching type declaration in a tree by semantic identity.
+        /// </summary>
+        private static SyntaxNode? FindMatchingTypeInTree(SyntaxNode root, string typeIdentity)
+        {
+            if (string.IsNullOrEmpty(typeIdentity)) return null;
+            return root.DescendantNodes()
+                .Where(n => n is ClassDeclarationSyntax ||
+                            n is StructDeclarationSyntax ||
+                            n is RecordDeclarationSyntax ||
+                            n is InterfaceDeclarationSyntax)
+                .FirstOrDefault(n => GetSemanticIdentity(n) == typeIdentity);
+        }
+
+        /// <summary>
+        /// Count the number of members of the same kind within a type declaration.
+        /// For constructors: counts all constructors.
+        /// For methods: counts methods with the same name.
+        /// For properties/fields: counts by identifier name.
+        /// </summary>
+        private static int CountMembersOfSameKind(SyntaxNode typeDeclaration, SyntaxNode targetMember)
+        {
+            var allChildren = typeDeclaration.ChildNodes();
+
+            return targetMember switch
+            {
+                ConstructorDeclarationSyntax =>
+                    allChildren.Count(m => m is ConstructorDeclarationSyntax),
+                MethodDeclarationSyntax method =>
+                    allChildren.Count(m =>
+                        m is MethodDeclarationSyntax md && md.Identifier.Text == method.Identifier.Text),
+                PropertyDeclarationSyntax prop =>
+                    allChildren.Count(m =>
+                        m is PropertyDeclarationSyntax pd && pd.Identifier.Text == prop.Identifier.Text),
+                FieldDeclarationSyntax field =>
+                    allChildren.Count(m =>
+                        m is FieldDeclarationSyntax fd &&
+                        fd.Declaration.Variables.Any(v =>
+                            field.Declaration.Variables.Any(fv => v.Identifier.Text == fv.Identifier.Text))),
+                _ => 0
+            };
+        }
+
+        /// <summary>
+        /// Check if an unmatched member is a signature change rather than a true add/delete.
+        /// Compares member counts in the source parent class vs the corresponding parent in the other tree.
+        /// Same count implies signature change; different count implies genuine add/remove.
+        /// </summary>
+        private static bool IsSignatureChange(SyntaxNode member, SyntaxNode otherTree)
+        {
+            var parentType = FindParentTypeDeclaration(member);
+            if (parentType == null) return false;
+
+            var parentIdentity = GetSemanticIdentity(parentType);
+            var otherParent = FindMatchingTypeInTree(otherTree, parentIdentity);
+            if (otherParent == null) return false;
+
+            int countInSource = CountMembersOfSameKind(parentType, member);
+            int countInOther = CountMembersOfSameKind(otherParent, member);
+
+            return countInSource == countInOther;
         }
 
         // ── CENSUS_EXTRACT Command ──────────────────────────────────────────
@@ -800,7 +928,8 @@ namespace SemanticMapper
                         .FirstOrDefault(n =>
                             (n is MethodDeclarationSyntax ||
                              n is PropertyDeclarationSyntax ||
-                             n is ConstructorDeclarationSyntax) &&
+                             n is ConstructorDeclarationSyntax ||
+                             n is FieldDeclarationSyntax) &&
                             GetLocalIdentity(n) == localId);
                 }
 
@@ -809,6 +938,17 @@ namespace SemanticMapper
 
                 // Calculate TSED diff_score with masking and short-circuit
                 double diffScore = CalculateDiffScore(oldNode, matchedNew);
+                bool isNewOrDead = (oldNode == null || matchedNew == null);
+
+                // Signature change detection: if old node has no match in new tree,
+                // check if parent class has the same member count → signature change
+                if (isNewOrDead && matchedNew == null && newTree != null)
+                {
+                    if (IsSignatureChange(oldNode, newTree))
+                        continue; // Skip: new-pass will handle the renamed version
+                }
+
+                int rawScore = isNewOrDead ? CalculateCognitiveComplexity(oldNode ?? matchedNew) : 0;
 
                 results.Add(new
                 {
@@ -818,7 +958,11 @@ namespace SemanticMapper
                     sanitized_old_code = StripTrivia(oldNode),
                     sanitized_new_code = StripTrivia(matchedNew),
                     is_logical_change = IsLogicalChange(oldNode, matchedNew),
-                    diff_score = diffScore
+                    diff_score = diffScore,
+                    is_new_or_dead = isNewOrDead,
+                    is_signature_change = false,
+                    raw_complexity_score = rawScore,
+                    object_type = GetObjectType(oldNode ?? matchedNew!)
                 });
             }
 
@@ -835,12 +979,29 @@ namespace SemanticMapper
                         .FirstOrDefault(n =>
                             (n is MethodDeclarationSyntax ||
                              n is PropertyDeclarationSyntax ||
-                             n is ConstructorDeclarationSyntax) &&
+                             n is ConstructorDeclarationSyntax ||
+                             n is FieldDeclarationSyntax) &&
                             GetLocalIdentity(n) == localId);
                 }
 
                 // Calculate TSED diff_score with masking and short-circuit
                 double diffScore = CalculateDiffScore(matchedOld, newNode);
+                bool isNewOrDead = (matchedOld == null || newNode == null);
+                bool isSignatureChange = false;
+
+                // Signature change detection: if new node has no match in old tree,
+                // check if parent class has the same member count → signature change
+                if (isNewOrDead && matchedOld == null && oldTree != null)
+                {
+                    if (IsSignatureChange(newNode, oldTree))
+                    {
+                        isSignatureChange = true;
+                        isNewOrDead = false;
+                        diffScore = 0.0; // Replaced by signature_changed_diff_score in Python
+                    }
+                }
+
+                int rawScore = isNewOrDead ? CalculateCognitiveComplexity(matchedOld ?? newNode) : 0;
 
                 results.Add(new
                 {
@@ -850,7 +1011,11 @@ namespace SemanticMapper
                     sanitized_old_code = StripTrivia(matchedOld),
                     sanitized_new_code = StripTrivia(newNode),
                     is_logical_change = IsLogicalChange(matchedOld, newNode),
-                    diff_score = diffScore
+                    diff_score = diffScore,
+                    is_new_or_dead = isNewOrDead,
+                    is_signature_change = isSignatureChange,
+                    raw_complexity_score = rawScore,
+                    object_type = GetObjectType(matchedOld ?? newNode!)
                 });
             }
 
@@ -872,7 +1037,8 @@ namespace SemanticMapper
             var members = root.DescendantNodes().Where(n => 
                 n is MethodDeclarationSyntax ||
                 n is PropertyDeclarationSyntax ||
-                n is ConstructorDeclarationSyntax).ToList();
+                n is ConstructorDeclarationSyntax ||
+                n is FieldDeclarationSyntax).ToList();
 
             var results = new List<object>();
 
@@ -881,7 +1047,9 @@ namespace SemanticMapper
                 results.Add(new
                 {
                     signature = GetSemanticIdentity(node),
-                    parent_signature = GetParentIdentity(node)
+                    parent_signature = GetParentIdentity(node),
+                    raw_complexity_score = CalculateCognitiveComplexity(node),
+                    object_type = GetObjectType(node)
                 });
             }
 

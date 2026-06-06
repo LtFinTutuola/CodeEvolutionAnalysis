@@ -10,6 +10,7 @@ Responsibilities:
 
 import os
 import json
+import numpy as np
 from src.utils import logger, get_roslyn_server
 
 PROJECT_CACHE = {}
@@ -125,7 +126,9 @@ def node_1b_baseline_manager(state):
                     "last_seen_date": None,
                     "hit_count": 0,
                     "commits": [],
-                    "is_dead_code": False
+                    "is_dead_code": False,
+                    "raw_complexity_score": obj.get("raw_complexity_score", 0),
+                    "object_type": obj.get("object_type", "method")
                 })
                 
         logger.info(f"Extracted {len(baseline_objects)} baseline objects.")
@@ -133,5 +136,33 @@ def node_1b_baseline_manager(state):
             json.dump(baseline_objects, f, indent=2)
         logger.info(f"Saved baseline to {cache_file}")
 
+    if config.get("enable_auto_calibration", False):
+        target = config.get("complexity_percentile_target", 0.75)
+        target_property = config.get("complexity_percentile_target_property", target)
+        target_constructor = config.get("complexity_percentile_target_constructor", target)
+        
+        scores_property = [obj.get("raw_complexity_score", 0) for obj in baseline_objects if obj.get("object_type") == "property"]
+        scores_constructor = [obj.get("raw_complexity_score", 0) for obj in baseline_objects if obj.get("object_type") == "constructor"]
+        scores_method = [obj.get("raw_complexity_score", 0) for obj in baseline_objects if obj.get("object_type") == "method"]
+        
+        if scores_property:
+            config["max_property_threshold"] = float(np.percentile(scores_property, target_property * 100))
+        else:
+            config["max_property_threshold"] = 17.0
+            
+        if scores_constructor:
+            config["max_constructor_threshold"] = float(np.percentile(scores_constructor, target_constructor * 100))
+        else:
+            config["max_constructor_threshold"] = 17.0
+            
+        if scores_method:
+            config["max_method_threshold"] = float(np.percentile(scores_method, target * 100))
+        else:
+            config["max_method_threshold"] = 17.0
+            
+        logger.info(f"Auto-Calibration thresholds: Property={config['max_property_threshold']:.2f}, "
+                    f"Constructor={config['max_constructor_threshold']:.2f}, "
+                    f"Method={config['max_method_threshold']:.2f}")
+
     logger.info("Node 1b Finished.")
-    return {"baseline_objects": baseline_objects}
+    return {"baseline_objects": baseline_objects, "config": config}

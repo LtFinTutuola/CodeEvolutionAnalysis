@@ -73,6 +73,10 @@ def node_3_roslyn_parser(state):
                 "clean_new": clean_new,
                 "is_logical_change": result.get("is_logical_change", False),
                 "diff_score": result.get("diff_score", 0.0),
+                "is_new_or_dead": result.get("is_new_or_dead", False),
+                "is_signature_change": result.get("is_signature_change", False),
+                "raw_complexity_score": result.get("raw_complexity_score", 0),
+                "object_type": result.get("object_type", "method"),
             })
 
     logger.info(
