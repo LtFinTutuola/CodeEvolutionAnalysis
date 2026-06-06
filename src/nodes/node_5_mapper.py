@@ -8,7 +8,7 @@ Responsibilities:
 - For each diff, calculate:
     1. Time Decay multiplier (weighted average of repo-lifespan and object-lifespan decay)
     2. Final Impact = diff_score × time_multiplier
-    3. Accumulate cumulative_impact_score per active method
+    3. Accumulate impact_score per active method
 - Dead Code Paradox: if a historical diff involves a method that no longer exists,
   DO NOT add it to the active method map. Instead, sum its final_impact to
   legacy_impact_score on the parent_object.
@@ -105,7 +105,7 @@ def node_5_mapper(state):
     for obj in baseline_objects:
         obj_id = obj["logical_object"]
         # Initialize impact scoring fields
-        obj["cumulative_impact_score"] = 0.0
+        obj["impact_score"] = 0.0
         obj["legacy_impact_score"] = 0.0
         mapping_dict[obj_id] = obj
 
@@ -173,7 +173,7 @@ def node_5_mapper(state):
                 target["first_seen_date"] = commit_date
             target["last_seen_date"] = commit_date
             target["commits"].append(commit_obj)
-            target["cumulative_impact_score"] += final_impact
+            target["impact_score"] += final_impact
 
             logs.append(
                 f"  MAPPED active: {obj_id} | diff_score={diff_score:.4f} × "
@@ -205,7 +205,7 @@ def node_5_mapper(state):
                     "hit_count": 0,
                     "commits": [],
                     "is_dead_code": False,
-                    "cumulative_impact_score": 0.0,
+                    "impact_score": 0.0,
                     "legacy_impact_score": final_impact,
                 }
                 logs.append(

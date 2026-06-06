@@ -26,8 +26,8 @@ def node_6_exporter(state):
 
     # ── Ensure impact scoring fields are present on every entry ──────────
     for entry in census_entries:
-        if "cumulative_impact_score" not in entry:
-            entry["cumulative_impact_score"] = 0.0
+        if "impact_score" not in entry:
+            entry["impact_score"] = 0.0
         if "legacy_impact_score" not in entry:
             entry["legacy_impact_score"] = 0.0
 
@@ -52,15 +52,15 @@ def node_6_exporter(state):
 
     # ── Impact Score Summary ─────────────────────────────────────────────
     active_entries = [e for e in census_entries if not e.get("is_dead_code", False)]
-    scored_entries = [e for e in active_entries if e.get("cumulative_impact_score", 0) > 0]
+    scored_entries = [e for e in active_entries if e.get("impact_score", 0) > 0]
     legacy_entries = [e for e in census_entries if e.get("legacy_impact_score", 0) > 0]
 
     logger.info(f"Impact scoring summary:")
     logger.info(f"  Active entries with impact > 0: {len(scored_entries)}")
     logger.info(f"  Entries with legacy impact > 0: {len(legacy_entries)}")
     if scored_entries:
-        max_impact = max(e["cumulative_impact_score"] for e in scored_entries)
-        avg_impact = sum(e["cumulative_impact_score"] for e in scored_entries) / len(scored_entries)
+        max_impact = max(e["impact_score"] for e in scored_entries)
+        avg_impact = sum(e["impact_score"] for e in scored_entries) / len(scored_entries)
         logger.info(f"  Max cumulative impact: {max_impact:.4f}")
         logger.info(f"  Avg cumulative impact: {avg_impact:.4f}")
 
