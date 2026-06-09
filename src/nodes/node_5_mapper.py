@@ -107,6 +107,7 @@ def node_5_mapper(state):
         # Initialize impact scoring fields
         obj["impact_score"] = 0.0
         obj["legacy_impact_score"] = 0.0
+        obj["legacy_commits"] = {}
         mapping_dict[obj_id] = obj
 
     orphans_created = 0
@@ -125,6 +126,10 @@ def node_5_mapper(state):
         # ── Apply Signature Change scoring ───────────────────────
         if hunk.get("is_signature_change", False):
             diff_score = config.get("signature_changed_diff_score", 0.10)
+        # ── Apply Field Modification scoring ───────────────────────
+        elif hunk.get("is_field_modification", False):
+            min_scores = config.get("min_creation_scores", {})
+            diff_score = float(min_scores.get("field_modification_score", 0.05))
         # ── Apply Auto-Calibration for Added/Removed methods ─────────
         elif hunk.get("is_new_or_dead", False):
             obj_type = hunk.get("object_type", "method")
@@ -183,12 +188,13 @@ def node_5_mapper(state):
             # ── Dead Code Paradox ────────────────────────────────────
             # The method no longer exists in the current codebase.
             # DO NOT add it to the active method map.
-            # Instead, sum its final_impact to legacy_impact_score on parent_object.
+            # Instead, sum its final_impact to legacy_commits on parent_object.
             dead_code_impacts += 1
 
+            parent_entry = None
             # Find or create the parent object entry to accumulate legacy impact
             if parent_obj and parent_obj in mapping_dict:
-                mapping_dict[parent_obj]["legacy_impact_score"] += final_impact
+                parent_entry = mapping_dict[parent_obj]
                 logs.append(
                     f"  DEAD CODE: {obj_id} → legacy impact {final_impact:.4f} "
                     f"added to parent {parent_obj}"
@@ -196,7 +202,7 @@ def node_5_mapper(state):
             elif parent_obj:
                 # Parent class doesn't exist yet in the mapping — create a class-level entry
                 orphans_created += 1
-                mapping_dict[parent_obj] = {
+                parent_entry = {
                     "logical_object": parent_obj,
                     "parent_object": "",
                     "project": project,
@@ -206,8 +212,10 @@ def node_5_mapper(state):
                     "commits": [],
                     "is_dead_code": False,
                     "impact_score": 0.0,
-                    "legacy_impact_score": final_impact,
+                    "legacy_impact_score": 0.0,
+                    "legacy_commits": {}
                 }
+                mapping_dict[parent_obj] = parent_entry
                 logs.append(
                     f"  DEAD CODE: {obj_id} → created parent entry {parent_obj} "
                     f"with legacy impact {final_impact:.4f}"
@@ -218,6 +226,16 @@ def node_5_mapper(state):
                     f"  DEAD CODE ORPHAN: {obj_id} has no parent_object, "
                     f"impact {final_impact:.4f} discarded"
                 )
+
+            if parent_entry:
+                if commit_hash not in parent_entry["legacy_commits"]:
+                    parent_entry["legacy_commits"][commit_hash] = {
+                        "commit_hash": commit_hash,
+                        "commit_description": commit_desc,
+                        "commit_date": commit_date,
+                        "impacts": []
+                    }
+                parent_entry["legacy_commits"][commit_hash]["impacts"].append(final_impact)
 
     logs.append(f"MAPPED {len(parsed_hunks)} hunks onto the baseline.")
     logs.append(f"DEAD CODE impacts distributed: {dead_code_impacts}")

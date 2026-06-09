@@ -757,17 +757,22 @@ namespace SemanticMapper
                        !(node is PropertyDeclarationSyntax) &&
                        !(node is ConstructorDeclarationSyntax) &&
                        !(node is FieldDeclarationSyntax) &&
-                       !(node is ClassDeclarationSyntax))
+                       !(node is ClassDeclarationSyntax) &&
+                       !(node is StructDeclarationSyntax) &&
+                       !(node is RecordDeclarationSyntax) &&
+                       !(node is InterfaceDeclarationSyntax))
                 {
                     node = node.Parent;
                 }
 
                 if (node != null)
                 {
-                    if (node is ClassDeclarationSyntax classNode)
+                    if (node is TypeDeclarationSyntax typeNode && 
+                        (node is ClassDeclarationSyntax || node is StructDeclarationSyntax || 
+                         node is RecordDeclarationSyntax || node is InterfaceDeclarationSyntax))
                     {
-                        // If we landed on a class, pick the member intersecting the line
-                        foreach (var member in classNode.Members)
+                        // If we landed on a class/struct/record/interface, pick the member intersecting the line
+                        foreach (var member in typeNode.Members)
                         {
                             if ((member is MethodDeclarationSyntax ||
                                  member is PropertyDeclarationSyntax ||
@@ -937,8 +942,25 @@ namespace SemanticMapper
                     processedNewIdentities.Add(localId);
 
                 // Calculate TSED diff_score with masking and short-circuit
-                double diffScore = CalculateDiffScore(oldNode, matchedNew);
+                double diffScore;
                 bool isNewOrDead = (oldNode == null || matchedNew == null);
+                bool isFieldModification = false;
+
+                if (!isNewOrDead && oldNode is FieldDeclarationSyntax oldF && matchedNew is FieldDeclarationSyntax newF)
+                {
+                    bool typeChanged = oldF.Declaration.Type.ToString() != newF.Declaration.Type.ToString();
+                    bool modifiersChanged = oldF.Modifiers.ToString() != newF.Modifiers.ToString();
+                    
+                    if (typeChanged || modifiersChanged)
+                    {
+                        isFieldModification = true;
+                    }
+                    diffScore = isFieldModification ? 1.0 : 0.0;
+                }
+                else
+                {
+                    diffScore = CalculateDiffScore(oldNode, matchedNew);
+                }
 
                 // Signature change detection: if old node has no match in new tree,
                 // check if parent class has the same member count → signature change
@@ -961,6 +983,7 @@ namespace SemanticMapper
                     diff_score = diffScore,
                     is_new_or_dead = isNewOrDead,
                     is_signature_change = false,
+                    is_field_modification = isFieldModification,
                     raw_complexity_score = rawScore,
                     object_type = GetObjectType(oldNode ?? matchedNew!)
                 });
@@ -985,8 +1008,25 @@ namespace SemanticMapper
                 }
 
                 // Calculate TSED diff_score with masking and short-circuit
-                double diffScore = CalculateDiffScore(matchedOld, newNode);
+                double diffScore;
                 bool isNewOrDead = (matchedOld == null || newNode == null);
+                bool isFieldModification = false;
+
+                if (!isNewOrDead && matchedOld is FieldDeclarationSyntax oldF && newNode is FieldDeclarationSyntax newF)
+                {
+                    bool typeChanged = oldF.Declaration.Type.ToString() != newF.Declaration.Type.ToString();
+                    bool modifiersChanged = oldF.Modifiers.ToString() != newF.Modifiers.ToString();
+                    
+                    if (typeChanged || modifiersChanged)
+                    {
+                        isFieldModification = true;
+                    }
+                    diffScore = isFieldModification ? 1.0 : 0.0;
+                }
+                else
+                {
+                    diffScore = CalculateDiffScore(matchedOld, newNode);
+                }
                 bool isSignatureChange = false;
 
                 // Signature change detection: if new node has no match in old tree,
@@ -1014,6 +1054,7 @@ namespace SemanticMapper
                     diff_score = diffScore,
                     is_new_or_dead = isNewOrDead,
                     is_signature_change = isSignatureChange,
+                    is_field_modification = isFieldModification,
                     raw_complexity_score = rawScore,
                     object_type = GetObjectType(matchedOld ?? newNode!)
                 });

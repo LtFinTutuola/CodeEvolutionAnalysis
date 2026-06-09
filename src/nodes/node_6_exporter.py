@@ -72,9 +72,6 @@ def node_6_exporter(state):
         # Pre-accumulated legacy score directly from Node 5
         class_data["base_legacy_score"] += entry.get("legacy_impact_score", 0.0)
         
-        is_dead = entry.get("is_dead_code", False)
-        target_commits = class_data["legacy_commits"] if is_dead else class_data["active_commits"]
-        
         for commit in entry.get("commits", []):
             chash = commit.get("commit_hash")
             if not chash:
@@ -86,14 +83,24 @@ def node_6_exporter(state):
             impact = diff * ltm
             
             if impact > 0:
-                if chash not in target_commits:
-                    target_commits[chash] = {
+                if chash not in class_data["active_commits"]:
+                    class_data["active_commits"][chash] = {
                         "commit_hash": chash,
                         "commit_description": commit.get("commit_description", ""),
                         "commit_date": commit.get("commit_date", ""),
                         "impacts": []
                     }
-                target_commits[chash]["impacts"].append(impact)
+                class_data["active_commits"][chash]["impacts"].append(impact)
+
+        for chash, cdata in entry.get("legacy_commits", {}).items():
+            if chash not in class_data["legacy_commits"]:
+                class_data["legacy_commits"][chash] = {
+                    "commit_hash": cdata["commit_hash"],
+                    "commit_description": cdata["commit_description"],
+                    "commit_date": cdata["commit_date"],
+                    "impacts": []
+                }
+            class_data["legacy_commits"][chash]["impacts"].extend(cdata["impacts"])
 
     def calculate_harmonic_score(impacts):
         sorted_impacts = sorted(impacts, reverse=True)
