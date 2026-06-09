@@ -39,9 +39,108 @@ def node_6_exporter(state):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     census_filename = f"{timestamp}_code_mapping.json"
     log_filename = f"{timestamp}_log.txt"
+    aggregated_filename = f"{timestamp}_aggregated_scores.json"
 
     final_census_path = os.path.join(output_dir, census_filename)
     final_log_path = os.path.join(output_dir, log_filename)
+    final_aggregated_path = os.path.join(output_dir, aggregated_filename)
+
+    # ── Phase 1-5: Aggregation Logic ─────────────────────────────────────
+    projects_data = {}
+    
+    for entry in census_entries:
+        proj_name = entry.get("project", "Unknown Project")
+        if proj_name not in projects_data:
+            projects_data[proj_name] = {}
+            
+        parent_obj = entry.get("parent_object", "")
+        log_obj = entry.get("logical_object", "")
+        class_name = parent_obj if parent_obj else log_obj
+        
+        if class_name not in projects_data[proj_name]:
+            projects_data[proj_name][class_name] = {
+                "class_name": class_name,
+                "logical_objects": [],
+                "active_commits": {},
+                "legacy_commits": {},
+                "base_legacy_score": 0.0
+            }
+            
+        class_data = projects_data[proj_name][class_name]
+        class_data["logical_objects"].append(entry)
+        
+        # Pre-accumulated legacy score directly from Node 5
+        class_data["base_legacy_score"] += entry.get("legacy_impact_score", 0.0)
+        
+        is_dead = entry.get("is_dead_code", False)
+        target_commits = class_data["legacy_commits"] if is_dead else class_data["active_commits"]
+        
+        for commit in entry.get("commits", []):
+            chash = commit.get("commit_hash")
+            if not chash:
+                continue
+                
+            scores = commit.get("scores", {})
+            diff = scores.get("diff_score", 0.0)
+            ltm = scores.get("lifespan_time_multiplier", 0.0)
+            impact = diff * ltm
+            
+            if impact > 0:
+                if chash not in target_commits:
+                    target_commits[chash] = {
+                        "commit_hash": chash,
+                        "commit_description": commit.get("commit_description", ""),
+                        "commit_date": commit.get("commit_date", ""),
+                        "impacts": []
+                    }
+                target_commits[chash]["impacts"].append(impact)
+
+    def calculate_harmonic_score(impacts):
+        sorted_impacts = sorted(impacts, reverse=True)
+        return sum(score / (i + 1) for i, score in enumerate(sorted_impacts))
+
+    final_projects = []
+    
+    for proj_name, classes_dict in projects_data.items():
+        project_obj = {
+            "project_name": proj_name,
+            "impact_score": 0.0,
+            "classes": []
+        }
+        
+        for class_name, class_data in classes_dict.items():
+            active_score = 0.0
+            commit_contributions = []
+            
+            for chash, cdata in class_data["active_commits"].items():
+                h_score = calculate_harmonic_score(cdata["impacts"])
+                active_score += h_score
+                commit_contributions.append({
+                    "commit_hash": cdata["commit_hash"],
+                    "commit_description": cdata["commit_description"],
+                    "commit_date": cdata["commit_date"],
+                    "impact_score": h_score
+                })
+                
+            # Rank descending by impact_score
+            commit_contributions.sort(key=lambda x: x["impact_score"], reverse=True)
+            
+            legacy_score = class_data["base_legacy_score"]
+            for chash, cdata in class_data["legacy_commits"].items():
+                legacy_score += calculate_harmonic_score(cdata["impacts"])
+                
+            class_obj = {
+                "class_name": class_name,
+                "impact_score": active_score,
+                "legacy_impact_score": legacy_score,
+                "logical_objects_count": len(class_data["logical_objects"]),
+                "commit_contributions": commit_contributions
+            }
+            
+            project_obj["classes"].append(class_obj)
+            project_obj["impact_score"] += active_score
+            
+        final_projects.append(project_obj)
 
     # ── Serialize census entries to JSON ─────────────────────────────────
     with open(final_census_path, "w", encoding="utf-8") as f:
@@ -49,6 +148,13 @@ def node_6_exporter(state):
 
     file_size_kb = os.path.getsize(final_census_path) / 1024.0
     logger.info(f"Census exported to: {final_census_path} ({file_size_kb:.1f} KB)")
+
+    # ── Serialize aggregated scores to JSON ──────────────────────────────
+    with open(final_aggregated_path, "w", encoding="utf-8") as f:
+        json.dump(final_projects, f, indent=2, ensure_ascii=False)
+
+    agg_file_size_kb = os.path.getsize(final_aggregated_path) / 1024.0
+    logger.info(f"Aggregated scores exported to: {final_aggregated_path} ({agg_file_size_kb:.1f} KB)")
 
     # ── Impact Score Summary ─────────────────────────────────────────────
     active_entries = [e for e in census_entries if not e.get("is_dead_code", False)]
