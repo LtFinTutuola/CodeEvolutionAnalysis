@@ -10,7 +10,7 @@ Responsibilities:
 
 import hashlib
 from collections import defaultdict
-from src.utils import get_diff_char_count, calculate_net_lines, logger
+from src.utils import get_diff_char_count, calculate_net_lines, logger, audit_snapshot
 
 
 def node_4_semantic_filter(state):
@@ -34,6 +34,8 @@ def node_4_semantic_filter(state):
         hunk["added_lines"] = added
         hunk["removed_lines"] = removed
 
+    # Removed Pass 1 snapshot to reduce log size
+
     # ── Pass 2: Move Detection (Anti-Move) ───────────────────────────────────
     logger.info("Pass 2: Move detection (within same commit boundary)")
 
@@ -43,6 +45,7 @@ def node_4_semantic_filter(state):
         by_commit[hunk["commit_hash"]].append(hunk)
 
     final_hunks = []
+    discarded_moves = []
     moves_elided = 0
 
     for commit_hash, commit_hunks in by_commit.items():
@@ -77,6 +80,11 @@ def node_4_semantic_filter(state):
                 matched_add_hashes.add(sem_hash)
                 matched_del_hashes.add(sem_hash)
                 moves_elided += 1
+                discarded_moves.append({
+                    "commit_hash": commit_hash,
+                    "logical_object": additions[sem_hash]["logical_object"],
+                    "reason": "spatial_refactoring_exact_match"
+                })
                 logs.append(
                     f"  DISCARDED semantic hunk (move detected/elided - exact code match): "
                     f"{additions[sem_hash]['logical_object']} in commit {commit_hash}"
@@ -91,6 +99,11 @@ def node_4_semantic_filter(state):
                 matched_add_hashes.add(add_by_sig[sig][0])
                 matched_del_hashes.add(del_by_sig[sig][0])
                 moves_elided += 1
+                discarded_moves.append({
+                    "commit_hash": commit_hash,
+                    "logical_object": sig,
+                    "reason": "spatial_refactoring_signature_match"
+                })
                 logs.append(
                     f"  DISCARDED semantic hunk (move detected/elided - signature match): "
                     f"{sig} in commit {commit_hash}"
@@ -123,10 +136,15 @@ def node_4_semantic_filter(state):
     )
     logger.info("Node 4 Finished.")
 
-    return {
+    output_state = {
         "parsed_hunks": final_hunks,
         "extraction_logs": logs,
     }
+    audit_snapshot({
+        "total_hunks_after_filters": len(final_hunks),
+        "discarded_moves_filtered": discarded_moves
+    }, "node_4_semantic_filter", "Semantic Filter Summary", config)
+    return output_state
 
 
 def _semantic_hash(code: str) -> str:

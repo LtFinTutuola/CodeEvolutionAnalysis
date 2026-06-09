@@ -182,3 +182,40 @@ def shutdown_subprocesses():
         _GIT_BATCHER.stop()
         _GIT_BATCHER = None
     logger.info("All subprocesses terminated.")
+
+# ── Auditability System ──────────────────────────────────────────────────────
+
+import json
+
+class _AuditEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        try:
+            return super().default(obj)
+        except TypeError:
+            return str(obj)
+
+def audit_snapshot(state_or_data, node_name: str, stage_description: str, config: dict):
+    """
+    Dumps a snapshot of the current state or data to a JSONL log file, 
+    if audit_mode is enabled in the configuration.
+    This enables a complete timeline to track the evolution of data.
+    """
+    if not config.get("audit_mode", False):
+        return
+    
+    timestamp = datetime.now().isoformat()
+    snapshot = {
+        "timestamp": timestamp,
+        "node_name": node_name,
+        "stage_description": stage_description,
+        "data_snapshot": state_or_data
+    }
+    
+    audit_file = os.path.join(log_dir, f"audit_snapshots_{_run_ts}.jsonl")
+    try:
+        with open(audit_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(snapshot, cls=_AuditEncoder, ensure_ascii=False) + "\n")
+    except Exception as e:
+        logger.error(f"Failed to write audit snapshot for {node_name} at {stage_description}: {e}")

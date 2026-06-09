@@ -8,7 +8,7 @@ Responsibilities:
 - Compute exact modified line numbers for Roslyn mapping
 """
 
-from src.utils import execute_git, get_git_batcher, get_changed_line_numbers, logger
+from src.utils import execute_git, get_git_batcher, get_changed_line_numbers, logger, audit_snapshot
 
 
 def node_2_git_extractor(state):
@@ -26,6 +26,7 @@ def node_2_git_extractor(state):
 
     batcher = get_git_batcher(repo_path)
     raw_diffs = []
+    discarded_files = []
     logs = state.get("extraction_logs", [])
 
     for i, commit_hash in enumerate(commits):
@@ -42,6 +43,7 @@ def node_2_git_extractor(state):
         # Skip merge commits
         parents_output = execute_git(f'git rev-list --parents -n 1 {commit_hash}', cwd=repo_path, check=False)
         if parents_output and len(parents_output.strip().split()) > 2:
+            discarded_files.append({"commit_hash": commit_hash, "reason": "merge_commit_skipped"})
             logs.append(f"  COMMIT {commit_hash}: Skipped (merge commit).")
             continue
 
@@ -96,6 +98,7 @@ def node_2_git_extractor(state):
                 continue
                 
             if _is_excluded_file(check_path):
+                discarded_files.append({"commit_hash": commit_hash, "file_path": check_path, "reason": "excluded_file_type"})
                 logs.append(f"  DISCARDED file (excluded): {check_path}")
             else:
                 valid_entries.append((old_path, new_path))
@@ -114,9 +117,11 @@ def node_2_git_extractor(state):
                 new_text = batcher.get_file_content(commit_hash, new_path)
 
             if not old_text and not new_text:
+                discarded_files.append({"commit_hash": commit_hash, "file_path": new_path or old_path, "reason": "no_content"})
                 logs.append(f"  DISCARDED file (no content): {new_path or old_path}")
                 continue
             if old_text == new_text:
+                discarded_files.append({"commit_hash": commit_hash, "file_path": new_path or old_path, "reason": "no_csharp_changes_identical"})
                 logs.append(f"  DISCARDED file (no C# changes - identical texts): {new_path or old_path}")
                 continue
 
@@ -124,6 +129,7 @@ def node_2_git_extractor(state):
             old_lines, new_lines = get_changed_line_numbers(old_text, new_text)
 
             if not old_lines and not new_lines:
+                discarded_files.append({"commit_hash": commit_hash, "file_path": new_path or old_path, "reason": "no_changed_line_coordinates"})
                 logs.append(f"  DISCARDED file (no changed line coordinates): {new_path or old_path}")
                 continue
 
@@ -142,10 +148,15 @@ def node_2_git_extractor(state):
     logger.info(f"Extracted {len(raw_diffs)} raw diff payloads from {len(commits)} commits.")
     logger.info("Node 2 Finished.")
 
-    return {
+    output_state = {
         "raw_diffs": raw_diffs,
         "extraction_logs": logs,
     }
+    audit_snapshot({
+        "total_raw_diffs_extracted": len(raw_diffs),
+        "discarded_files": discarded_files
+    }, "node_2_git_extractor", "Git Extraction Summary", config)
+    return output_state
 
 
 def _is_excluded_file(filepath: str) -> bool:

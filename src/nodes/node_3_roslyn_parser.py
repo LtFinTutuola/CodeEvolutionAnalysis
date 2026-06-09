@@ -8,7 +8,7 @@ Responsibilities:
 - Populate parsed_hunks with semantic metadata
 """
 
-from src.utils import get_roslyn_server, logger
+from src.utils import get_roslyn_server, logger, audit_snapshot
 
 
 def node_3_roslyn_parser(state):
@@ -26,6 +26,7 @@ def node_3_roslyn_parser(state):
 
     server = get_roslyn_server(target_framework)
     parsed_hunks = []
+    discarded_hunks = []
     logs = state.get("extraction_logs", [])
 
     for i, diff_entry in enumerate(raw_diffs):
@@ -45,6 +46,7 @@ def node_3_roslyn_parser(state):
         census_results = server.census_extract(old_text, new_text, old_lines, new_lines)
 
         if not census_results:
+            discarded_hunks.append({"commit_hash": commit_hash, "file_path": file_path, "reason": "no_csharp_ast_matches"})
             logs.append(f"  DISCARDED file content in Roslyn mapping (no C# AST matches): {file_path}")
             continue
 
@@ -56,6 +58,7 @@ def node_3_roslyn_parser(state):
 
             # Skip entries where Roslyn couldn't resolve a signature
             if not logical_object:
+                discarded_hunks.append({"commit_hash": commit_hash, "file_path": file_path, "reason": "missing_signature_resolution"})
                 logs.append(f"  DISCARDED semantic hunk (missing signature): in {file_path}")
                 continue
 
@@ -84,7 +87,12 @@ def node_3_roslyn_parser(state):
     )
     logger.info("Node 3 Finished.")
 
-    return {
+    output_state = {
         "parsed_hunks": parsed_hunks,
         "extraction_logs": logs,
     }
+    audit_snapshot({
+        "total_parsed_hunks": len(parsed_hunks),
+        "discarded_hunks": discarded_hunks
+    }, "node_3_roslyn_parser", "Semantic Parsing Summary", config)
+    return output_state

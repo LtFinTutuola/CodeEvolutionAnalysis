@@ -11,7 +11,7 @@ Responsibilities:
 import os
 import json
 import numpy as np
-from src.utils import logger, get_roslyn_server
+from src.utils import logger, get_roslyn_server, audit_snapshot
 
 PROJECT_CACHE = {}
 
@@ -165,4 +165,13 @@ def node_1b_baseline_manager(state):
                     f"Method={config['max_method_threshold']:.2f}")
 
     logger.info("Node 1b Finished.")
-    return {"baseline_objects": baseline_objects, "config": config}
+    output_state = {"baseline_objects": baseline_objects, "config": config}
+    audit_snapshot({
+        "auto_calibration_thresholds": {
+            "max_property_threshold": config.get("max_property_threshold"),
+            "max_constructor_threshold": config.get("max_constructor_threshold"),
+            "max_method_threshold": config.get("max_method_threshold")
+        },
+        "total_baseline_objects": len(baseline_objects)
+    }, "node_1b_baseline_manager", "Baseline and Calibration Summary", config)
+    return output_state

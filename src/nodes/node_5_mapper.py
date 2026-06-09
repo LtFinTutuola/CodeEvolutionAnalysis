@@ -17,7 +17,7 @@ Responsibilities:
 """
 
 from datetime import datetime
-from src.utils import logger
+from src.utils import logger, audit_snapshot
 from src.nodes.node_1b_baseline_manager import get_project_name
 
 
@@ -91,6 +91,8 @@ def node_5_mapper(state):
     baseline_objects = state.get("baseline_objects", [])
     parsed_hunks = state.get("parsed_hunks", [])
     logs = state.get("extraction_logs", [])
+
+    # Removed beginning snapshot to reduce log size
 
     # ── Load Time Decay configuration ────────────────────────────────────
     repo_first_date = state.get("repo_first_commit_date", "")
@@ -166,7 +168,17 @@ def node_5_mapper(state):
             "commit_date": commit_date,
             "scores": {
                 "diff_score": round(diff_score, 6),
-                "lifespan_time_multiplier": round(lifespan_mult, 6)
+                "lifespan_time_multiplier": round(lifespan_mult, 6),
+                "calculation_factors": {
+                    "raw_complexity_score": hunk.get("raw_complexity_score", 0),
+                    "added_lines": hunk.get("added_lines", 0),
+                    "removed_lines": hunk.get("removed_lines", 0),
+                    "is_new_or_dead": hunk.get("is_new_or_dead", False),
+                    "is_signature_change": hunk.get("is_signature_change", False),
+                    "is_field_modification": hunk.get("is_field_modification", False),
+                    "object_type": hunk.get("object_type", "method"),
+                    "final_impact": round(final_impact, 6)
+                }
             }
         }
 
@@ -247,7 +259,12 @@ def node_5_mapper(state):
     # Flatten the mapping_dict to a list before passing to Node 6
     final_census = list(mapping_dict.values())
 
-    return {
+    output_state = {
         "census_entries": final_census,
         "extraction_logs": logs
     }
+    active_census = [entry for entry in final_census if entry.get("impact_score", 0) > 0 or entry.get("legacy_impact_score", 0) > 0]
+    audit_snapshot({
+        "mapped_census_entries": active_census
+    }, "node_5_mapper", "Active Scored Objects", config)
+    return output_state

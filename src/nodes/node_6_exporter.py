@@ -10,7 +10,7 @@ Responsibilities:
 import os
 import json
 from datetime import datetime
-from src.utils import shutdown_subprocesses, logger
+from src.utils import shutdown_subprocesses, logger, audit_snapshot
 
 
 def node_6_exporter(state):
@@ -148,6 +148,8 @@ def node_6_exporter(state):
             project_obj["impact_score"] += active_score
             
         final_projects.append(project_obj)
+
+    audit_snapshot({"aggregated_scores": final_projects}, "node_6_exporter", "After Aggregation", config)
 
     # ── Serialize census entries to JSON ─────────────────────────────────
     with open(final_census_path, "w", encoding="utf-8") as f:

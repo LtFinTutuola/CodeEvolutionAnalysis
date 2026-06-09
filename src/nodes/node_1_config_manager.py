@@ -9,7 +9,7 @@ Responsibilities:
 
 import os
 import yaml
-from src.utils import execute_git, logger
+from src.utils import execute_git, logger, audit_snapshot
 
 
 def node_1_config_manager(state):
@@ -91,10 +91,19 @@ def node_1_config_manager(state):
         f"REPO TEMPORAL BOUNDARIES: first={repo_first_commit_date}, last={repo_last_commit_date}"
     ]
 
-    return {
+    output_state = {
         "config": config,
         "commits_to_process": commits,
         "repo_first_commit_date": repo_first_commit_date,
         "repo_last_commit_date": repo_last_commit_date,
         "extraction_logs": logs,
     }
+
+    audit_snapshot({
+        "config_parameters": config,
+        "repo_first_commit_date": repo_first_commit_date,
+        "repo_last_commit_date": repo_last_commit_date,
+        "total_commits_to_process": len(commits)
+    }, "node_1_config_manager", "Configuration and Scope", config)
+
+    return output_state
