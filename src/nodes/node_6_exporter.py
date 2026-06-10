@@ -210,4 +210,8 @@ def node_6_exporter(state):
 
     logger.info("Node 6 Finished. Pipeline complete.")
 
-    return state
+    return {
+        **state,
+        "report_aggregated_file": final_aggregated_path,
+        "report_raw_file": final_census_path
+    }

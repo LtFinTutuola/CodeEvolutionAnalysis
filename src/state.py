@@ -51,3 +51,7 @@ class AgentState(TypedDict):
 
     # Detailed logs reporting the collecting and discarding operations.
     extraction_logs: List[str]
+
+    # Dynamically generated paths from the exporter, used by the report generator if needed
+    report_aggregated_file: str
+    report_raw_file: str
