@@ -2,6 +2,7 @@ __pycache__/
 log/
 output/
 heatmap_reports/
+markdown_files/
 roslyn_server/bin/
 roslyn_server/obj/
 venv/
