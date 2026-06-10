@@ -28,8 +28,6 @@ def node_6_exporter(state):
     for entry in census_entries:
         if "impact_score" not in entry:
             entry["impact_score"] = 0.0
-        if "legacy_impact_score" not in entry:
-            entry["legacy_impact_score"] = 0.0
 
     # ── Ensure output directory exists ───────────────────────────────────
     output_dir = os.path.dirname(output_path) or "output"
@@ -48,6 +46,8 @@ def node_6_exporter(state):
     # ── Phase 1-5: Aggregation Logic ─────────────────────────────────────
     projects_data = {}
     
+    global_legacy_commits = state.get("global_legacy_commits", {})
+
     for entry in census_entries:
         proj_name = entry.get("project", "Unknown Project")
         if proj_name not in projects_data:
@@ -69,18 +69,12 @@ def node_6_exporter(state):
         class_data = projects_data[proj_name][class_name]
         class_data["logical_objects"].append(entry)
         
-        # Pre-accumulated legacy score directly from Node 5
-        class_data["base_legacy_score"] += entry.get("legacy_impact_score", 0.0)
-        
         for commit in entry.get("commits", []):
             chash = commit.get("commit_hash")
             if not chash:
                 continue
                 
-            scores = commit.get("scores", {})
-            diff = scores.get("diff_score", 0.0)
-            ltm = scores.get("lifespan_time_multiplier", 0.0)
-            impact = diff * ltm
+            impact = commit.get("scores", {}).get("calculation_factors", {}).get("final_impact", 0.0)
             
             if impact > 0:
                 if chash not in class_data["active_commits"]:
@@ -92,15 +86,36 @@ def node_6_exporter(state):
                     }
                 class_data["active_commits"][chash]["impacts"].append(impact)
 
-        for chash, cdata in entry.get("legacy_commits", {}).items():
-            if chash not in class_data["legacy_commits"]:
-                class_data["legacy_commits"][chash] = {
-                    "commit_hash": cdata["commit_hash"],
-                    "commit_description": cdata["commit_description"],
-                    "commit_date": cdata["commit_date"],
-                    "impacts": []
-                }
-            class_data["legacy_commits"][chash]["impacts"].extend(cdata["impacts"])
+    # Process global_legacy_commits
+    for class_name, legacy_data in global_legacy_commits.items():
+        proj_name = legacy_data.get("project", "Unknown Project")
+        if proj_name not in projects_data:
+            projects_data[proj_name] = {}
+            
+        if class_name not in projects_data[proj_name]:
+            projects_data[proj_name][class_name] = {
+                "class_name": class_name,
+                "logical_objects": [],
+                "active_commits": {},
+                "legacy_commits": {},
+                "base_legacy_score": 0.0
+            }
+            
+        class_data = projects_data[proj_name][class_name]
+        
+        for chash, commit_list in legacy_data.get("commits", {}).items():
+            for commit in commit_list:
+                impact = commit.get("scores", {}).get("calculation_factors", {}).get("final_impact", 0.0)
+                
+                if impact > 0:
+                    if chash not in class_data["legacy_commits"]:
+                        class_data["legacy_commits"][chash] = {
+                            "commit_hash": chash,
+                            "commit_description": commit.get("commit_description", ""),
+                            "commit_date": commit.get("commit_date", ""),
+                            "impacts": []
+                        }
+                    class_data["legacy_commits"][chash]["impacts"].append(impact)
 
     def calculate_harmonic_score(impacts):
         sorted_impacts = sorted(impacts, reverse=True)
@@ -168,11 +183,12 @@ def node_6_exporter(state):
     # ── Impact Score Summary ─────────────────────────────────────────────
     active_entries = [e for e in census_entries if not e.get("is_dead_code", False)]
     scored_entries = [e for e in active_entries if e.get("impact_score", 0) > 0]
-    legacy_entries = [e for e in census_entries if e.get("legacy_impact_score", 0) > 0]
+    global_legacy_commits = state.get("global_legacy_commits", {})
+    legacy_classes_count = len(global_legacy_commits)
 
     logger.info(f"Impact scoring summary:")
     logger.info(f"  Active entries with impact > 0: {len(scored_entries)}")
-    logger.info(f"  Entries with legacy impact > 0: {len(legacy_entries)}")
+    logger.info(f"  Classes with legacy impact > 0: {legacy_classes_count}")
     if scored_entries:
         max_impact = max(e["impact_score"] for e in scored_entries)
         avg_impact = sum(e["impact_score"] for e in scored_entries) / len(scored_entries)

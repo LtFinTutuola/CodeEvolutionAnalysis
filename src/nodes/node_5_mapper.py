@@ -108,12 +108,10 @@ def node_5_mapper(state):
         obj_id = obj["logical_object"]
         # Initialize impact scoring fields
         obj["impact_score"] = 0.0
-        obj["legacy_impact_score"] = 0.0
-        obj["legacy_commits"] = {}
         mapping_dict[obj_id] = obj
 
-    orphans_created = 0
     dead_code_impacts = 0
+    global_legacy_commits = {}
 
     # ── Process hunks chronologically ────────────────────────────────────
     for hunk in parsed_hunks:
@@ -200,60 +198,38 @@ def node_5_mapper(state):
             # ── Dead Code Paradox ────────────────────────────────────
             # The method no longer exists in the current codebase.
             # DO NOT add it to the active method map.
-            # Instead, sum its final_impact to legacy_commits on parent_object.
+            # Instead, populate the new global state dictionary.
             dead_code_impacts += 1
 
-            parent_entry = None
-            # Find or create the parent object entry to accumulate legacy impact
-            if parent_obj and parent_obj in mapping_dict:
-                parent_entry = mapping_dict[parent_obj]
-                logs.append(
-                    f"  DEAD CODE: {obj_id} → legacy impact {final_impact:.4f} "
-                    f"added to parent {parent_obj}"
-                )
-            elif parent_obj:
-                # Parent class doesn't exist yet in the mapping — create a class-level entry
-                orphans_created += 1
-                parent_entry = {
-                    "logical_object": parent_obj,
-                    "parent_object": "",
-                    "project": project,
-                    "first_seen_date": commit_date,
-                    "last_seen_date": commit_date,
-                    "hit_count": 0,
-                    "commits": [],
-                    "is_dead_code": False,
-                    "impact_score": 0.0,
-                    "legacy_impact_score": 0.0,
-                    "legacy_commits": {}
-                }
-                mapping_dict[parent_obj] = parent_entry
-                logs.append(
-                    f"  DEAD CODE: {obj_id} → created parent entry {parent_obj} "
-                    f"with legacy impact {final_impact:.4f}"
-                )
-            else:
-                # No parent available — log and discard
-                logs.append(
-                    f"  DEAD CODE ORPHAN: {obj_id} has no parent_object, "
-                    f"impact {final_impact:.4f} discarded"
-                )
+            if not parent_obj:
+                parts = obj_id.split(".")
+                if len(parts) > 1:
+                    parent_obj = ".".join(parts[:-1])
+                else:
+                    parent_obj = obj_id
 
-            if parent_entry:
-                if commit_hash not in parent_entry["legacy_commits"]:
-                    parent_entry["legacy_commits"][commit_hash] = {
-                        "commit_hash": commit_hash,
-                        "commit_description": commit_desc,
-                        "commit_date": commit_date,
-                        "impacts": []
-                    }
-                parent_entry["legacy_commits"][commit_hash]["impacts"].append(final_impact)
+            # Safe Cascading Initialization to prevent KeyErrors
+            parent_dict = global_legacy_commits.setdefault(parent_obj, {
+                "project": project,
+                "commits": {}
+            })
+            
+            # Ensure the project field is populated if it was initialized empty elsewhere
+            if not parent_dict.get("project"):
+                parent_dict["project"] = project
+                
+            commit_list = parent_dict["commits"].setdefault(commit_hash, [])
+            commit_list.append(commit_obj)
+
+            logs.append(
+                f"  DEAD CODE: {obj_id} → legacy impact {final_impact:.4f} "
+                f"added to global parent {parent_obj}"
+            )
 
     logs.append(f"MAPPED {len(parsed_hunks)} hunks onto the baseline.")
     logs.append(f"DEAD CODE impacts distributed: {dead_code_impacts}")
-    logs.append(f"PARENT ENTRIES created for dead code: {orphans_created}")
 
-    logger.info(f"Mapping complete. Dead code impacts: {dead_code_impacts}, Parent entries created: {orphans_created}")
+    logger.info(f"Mapping complete. Dead code impacts: {dead_code_impacts}")
     logger.info("Node 5 Finished.")
 
     # Flatten the mapping_dict to a list before passing to Node 6
@@ -261,10 +237,12 @@ def node_5_mapper(state):
 
     output_state = {
         "census_entries": final_census,
+        "global_legacy_commits": global_legacy_commits,
         "extraction_logs": logs
     }
-    active_census = [entry for entry in final_census if entry.get("impact_score", 0) > 0 or entry.get("legacy_impact_score", 0) > 0]
+    active_census = [entry for entry in final_census if entry.get("impact_score", 0) > 0]
     audit_snapshot({
-        "mapped_census_entries": active_census
+        "mapped_census_entries": active_census,
+        "global_legacy_commits": global_legacy_commits
     }, "node_5_mapper", "Active Scored Objects", config)
     return output_state

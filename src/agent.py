@@ -10,6 +10,7 @@ from src.state import AgentState
 from src.nodes.node_1_config_manager import node_1_config_manager
 from src.nodes.node_1b_baseline_manager import node_1b_baseline_manager
 from src.nodes.node_2_git_extractor import node_2_git_extractor
+from src.nodes.node_2b_global_filter import node_2b_global_filter
 from src.nodes.node_3_roslyn_parser import node_3_roslyn_parser
 from src.nodes.node_4_semantic_filter import node_4_semantic_filter
 from src.nodes.node_5_mapper import node_5_mapper
@@ -23,6 +24,7 @@ workflow = StateGraph(AgentState)
 workflow.add_node("config_manager", node_1_config_manager)
 workflow.add_node("baseline_manager", node_1b_baseline_manager)
 workflow.add_node("git_extractor", node_2_git_extractor)
+workflow.add_node("global_filter", node_2b_global_filter)
 workflow.add_node("roslyn_parser", node_3_roslyn_parser)
 workflow.add_node("semantic_filter", node_4_semantic_filter)
 workflow.add_node("mapper", node_5_mapper)
@@ -32,7 +34,8 @@ workflow.add_node("exporter", node_6_exporter)
 workflow.add_edge(START, "config_manager")
 workflow.add_edge("config_manager", "baseline_manager")
 workflow.add_edge("baseline_manager", "git_extractor")
-workflow.add_edge("git_extractor", "roslyn_parser")
+workflow.add_edge("git_extractor", "global_filter")
+workflow.add_edge("global_filter", "roslyn_parser")
 workflow.add_edge("roslyn_parser", "semantic_filter")
 workflow.add_edge("semantic_filter", "mapper")
 workflow.add_edge("mapper", "exporter")

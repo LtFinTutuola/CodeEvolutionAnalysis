@@ -40,6 +40,9 @@ class AgentState(TypedDict):
     # }
     census_entries: List[Dict[str, Any]]
 
+    # Global tracking of legacy impacts (dead code) grouped by class
+    global_legacy_commits: Dict[str, Any]
+
     # Absolute date of the repository's very first commit (ISO format string)
     repo_first_commit_date: str
 
