@@ -84,6 +84,7 @@ def node_3_roslyn_parser(state):
                 "is_field_modification": result.get("is_field_modification", False),
                 "raw_complexity_score": result.get("raw_complexity_score", 0),
                 "object_type": result.get("object_type", "method"),
+                "edit_script": result.get("edit_script", []),
             })
 
     logger.info(

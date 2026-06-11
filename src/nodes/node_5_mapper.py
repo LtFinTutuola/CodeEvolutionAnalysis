@@ -180,66 +180,67 @@ def node_5_mapper(state):
         complexity_score = 0.0
         used_neuro_symbolic = False
 
-        # ── Apply Signature Change scoring ───────────────────────
-        if hunk.get("is_signature_change", False):
-            diff_score = config.get("signature_changed_diff_score", 0.10)
-        # ── Apply Field Modification scoring ───────────────────────
-        elif hunk.get("is_field_modification", False):
-            min_scores = config.get("min_creation_scores", {})
-            diff_score = float(min_scores.get("field_modification_score", 0.05))
-        # ── Apply Auto-Calibration for Added/Removed methods ─────────
-        elif hunk.get("is_new_or_dead", False):
-            obj_type = hunk.get("object_type", "method")
-            min_scores = config.get("min_creation_scores", {})
-            base_score = float(min_scores.get(obj_type, 0.05))
-            
-            if obj_type == "field":
-                diff_score = base_score
-            else:
-                threshold_key = f"max_{obj_type}_threshold"
-                specific_threshold = config.get(threshold_key, 17.0)
-                
-                raw_score = hunk.get("raw_complexity_score", 0)
-                scale_factor = min(1.0, float(raw_score) / max(1.0, float(specific_threshold)))
-                
-                diff_score = base_score + (scale_factor * (1.0 - base_score))
-        else:
-            # ── Neuro-Symbolic Engine: synthesize from 4 dimensions ──
-            clean_old = hunk.get("clean_old", "")
-            clean_new = hunk.get("clean_new", "")
+        # ── Universal Neuro-Symbolic Engine Routing ──────────────
+        clean_old = hunk.get("clean_old", "")
+        clean_new = hunk.get("clean_new", "")
+        obj_type = hunk.get("object_type", "method")
 
+        if hunk.get("is_new_or_dead", False):
+            # Short-circuit external evaluations for pure additions/deletions.
+            # They naturally exhibit maximum divergence against a null tree.
+            raw_struct = 1.0
+            raw_semantic = 1.0
+            raw_dataflow = 1.0
+            raw_complex = 1.0
+
+            # Apply dynamic magnitude scaling based on cognitive mass vs historical percentiles
+            threshold_key = f"max_{obj_type}_threshold"
+            specific_threshold = float(config.get(threshold_key, 17.0))
+            raw_score = float(hunk.get("raw_complexity_score", 0))
+            scale_factor = min(1.0, raw_score / max(1.0, specific_threshold))
+
+            # Dynamically scale all 4 dimensions
+            structural_score = raw_struct * scale_factor
+            semantic_score = raw_semantic * scale_factor
+            dataflow_score = raw_dataflow * scale_factor
+            complexity_score = raw_complex * scale_factor
+            
+        else:
+            # ── Standard Modification Evaluation ──
+            
             # D_structural: already computed by Roslyn (GumTree)
             structural_score = hunk.get("structural_score", diff_score)
 
             # D_semantic: CodeBERT cosine divergence
             if clean_old and clean_new:
                 semantic_score = neural_engine.compute_semantic_divergence(clean_old, clean_new)
+            else:
+                semantic_score = 0.0
             
             # D_dataflow: Tree-Sitter Jaccard distance
             if clean_old and clean_new:
                 dataflow_score = dataflow_tracer.compute_dataflow_divergence(clean_old, clean_new)
+            else:
+                dataflow_score = 0.0
 
             # D_complexity: normalized complexity delta
-            old_complexity = hunk.get("raw_complexity_score", 0)
-            # For modifications, compute new complexity from new code's raw score
             # The raw_complexity_score from Roslyn is only set for new_or_dead entries,
             # so for modifications we approximate from the structural data
-            new_complexity = old_complexity  # default: no change
             if clean_old != clean_new and structural_score > 0:
                 # Approximate complexity change from the structural score
                 complexity_score = min(1.0, structural_score * 0.5)
             else:
                 complexity_score = 0.0
 
-            # ── Convex synthesis ──────────────────────────────────
-            diff_score = (
-                w_struct * structural_score +
-                w_semantic * semantic_score +
-                w_dataflow * dataflow_score +
-                w_complexity * complexity_score
-            )
-            diff_score = round(max(0.0, min(1.0, diff_score)), 6)
-            used_neuro_symbolic = True
+        # ── Convex synthesis ──────────────────────────────────
+        diff_score = (
+            w_struct * structural_score +
+            w_semantic * semantic_score +
+            w_dataflow * dataflow_score +
+            w_complexity * complexity_score
+        )
+        diff_score = round(max(0.0, min(1.0, diff_score)), 6)
+        used_neuro_symbolic = True
 
 
         # Ensure the project field is resolved dynamically
@@ -262,6 +263,7 @@ def node_5_mapper(state):
             "is_signature_change": hunk.get("is_signature_change", False),
             "is_field_modification": hunk.get("is_field_modification", False),
             "object_type": hunk.get("object_type", "method"),
+            "edit_script": hunk.get("edit_script", []),
             "final_impact": round(final_impact, 6)
         }
 

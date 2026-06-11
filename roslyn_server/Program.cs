@@ -445,6 +445,12 @@ namespace SemanticMapper
             public SyntaxNode? NewNode;
         }
 
+        public class NormalizedEditOp
+        {
+            public string operation { get; set; }
+            public string node_type { get; set; }
+        }
+
         /// <summary>
         /// Lightweight representation of a syntax node for hashing and comparison.
         /// </summary>
@@ -762,7 +768,7 @@ namespace SemanticMapper
         /// Move operations weighted at 0.5 because moves are structural reorganization,
         /// not destructive changes.
         /// </summary>
-        private static double CalculateStructuralDistance(SyntaxNode maskedOld, SyntaxNode maskedNew)
+        private static double CalculateStructuralDistance(SyntaxNode maskedOld, SyntaxNode maskedNew, out List<NormalizedEditOp> normalizedEditScript)
         {
             var oldMap = BuildNodeMap(maskedOld);
             var newMap = BuildNodeMap(maskedNew);
@@ -775,6 +781,11 @@ namespace SemanticMapper
 
             // Generate edit script
             var editScript = GenerateEditScript(maskedOld, maskedNew, matched, oldMap, newMap);
+
+            normalizedEditScript = editScript.Select(e => new NormalizedEditOp {
+                operation = e.Type.ToString(),
+                node_type = (e.OldNode ?? e.NewNode)?.Kind().ToString() ?? "Unknown"
+            }).ToList();
 
             // Count operations
             int inserts = editScript.Count(e => e.Type == EditType.Insert);
@@ -803,10 +814,11 @@ namespace SemanticMapper
         /// Also outputs the old/new AST hashes for downstream use.
         /// </summary>
         private static double CalculateDiffScore(SyntaxNode? oldNode, SyntaxNode? newNode,
-            out string hashOld, out string hashNew)
+            out string hashOld, out string hashNew, out List<NormalizedEditOp> editScript)
         {
             hashOld = "";
             hashNew = "";
+            editScript = new List<NormalizedEditOp>();
 
             // Both null: no change
             if (oldNode == null && newNode == null) return 0.0;
@@ -829,7 +841,7 @@ namespace SemanticMapper
             if (hashOld == hashNew) return 0.0;
 
             // Full GumTree structural diffing
-            return CalculateStructuralDistance(maskedOld, maskedNew);
+            return CalculateStructuralDistance(maskedOld, maskedNew, out editScript);
         }
 
         /// <summary>
@@ -837,7 +849,7 @@ namespace SemanticMapper
         /// </summary>
         private static double CalculateDiffScore(SyntaxNode? oldNode, SyntaxNode? newNode)
         {
-            return CalculateDiffScore(oldNode, newNode, out _, out _);
+            return CalculateDiffScore(oldNode, newNode, out _, out _, out _);
         }
 
         // ── Cognitive Complexity ─────────────────────────────────────────────
@@ -1148,6 +1160,7 @@ namespace SemanticMapper
                 // Calculate GumTree diff_score with masking and short-circuit
                 double diffScore;
                 string astHashOld = "", astHashNew = "";
+                List<NormalizedEditOp> editScript = new List<NormalizedEditOp>();
                 bool isNewOrDead = (oldNode == null || matchedNew == null);
                 bool isFieldModification = false;
 
@@ -1166,7 +1179,7 @@ namespace SemanticMapper
                 }
                 else
                 {
-                    diffScore = CalculateDiffScore(oldNode, matchedNew, out astHashOld, out astHashNew);
+                    diffScore = CalculateDiffScore(oldNode, matchedNew, out astHashOld, out astHashNew, out editScript);
                 }
 
                 // Signature change detection: if old node has no match in new tree,
@@ -1191,6 +1204,7 @@ namespace SemanticMapper
                     structural_score = diffScore,
                     ast_hash_old = astHashOld,
                     ast_hash_new = astHashNew,
+                    edit_script = editScript,
                     is_new_or_dead = isNewOrDead,
                     is_signature_change = false,
                     is_field_modification = isFieldModification,
@@ -1220,6 +1234,7 @@ namespace SemanticMapper
                 // Calculate GumTree diff_score with masking and short-circuit
                 double diffScore;
                 string astHashOld = "", astHashNew = "";
+                List<NormalizedEditOp> editScript = new List<NormalizedEditOp>();
                 bool isNewOrDead = (matchedOld == null || newNode == null);
                 bool isFieldModification = false;
 
@@ -1238,7 +1253,7 @@ namespace SemanticMapper
                 }
                 else
                 {
-                    diffScore = CalculateDiffScore(matchedOld, newNode, out astHashOld, out astHashNew);
+                    diffScore = CalculateDiffScore(matchedOld, newNode, out astHashOld, out astHashNew, out editScript);
                 }
                 bool isSignatureChange = false;
 
@@ -1268,6 +1283,7 @@ namespace SemanticMapper
                     structural_score = diffScore,
                     ast_hash_old = astHashOld,
                     ast_hash_new = astHashNew,
+                    edit_script = editScript,
                     is_new_or_dead = isNewOrDead,
                     is_signature_change = isSignatureChange,
                     is_field_modification = isFieldModification,
