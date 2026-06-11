@@ -5,3 +5,10 @@ pandas>=2.0.0
 matplotlib>=3.7.0
 reportlab>=4.0.0
 Pillow>=10.0.0
+tree-sitter>=0.21.0
+tree-sitter-c-sharp>=0.21.0
+onnxruntime>=1.17.0
+transformers>=4.40.0
+torch>=2.0.0
+onnxscript
+onnx
