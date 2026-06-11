@@ -255,38 +255,25 @@ def node_5_mapper(state):
         final_impact = diff_score * lifespan_mult
 
         # ── Build per-commit auditability scores ─────────────────────
-        calculation_factors = {
-            "raw_complexity_score": hunk.get("raw_complexity_score", 0),
-            "added_lines": hunk.get("added_lines", 0),
-            "removed_lines": hunk.get("removed_lines", 0),
-            "is_new_or_dead": hunk.get("is_new_or_dead", False),
-            "is_signature_change": hunk.get("is_signature_change", False),
-            "is_field_modification": hunk.get("is_field_modification", False),
-            "object_type": hunk.get("object_type", "method"),
-            "edit_script": hunk.get("edit_script", []),
-            "final_impact": round(final_impact, 6)
+        diff_score_calculation_factors = {
+            "structural_score": round(structural_score, 6),
+            "semantic_score": round(semantic_score, 6),
+            "dataflow_score": round(dataflow_score, 6),
+            "complexity_score": round(complexity_score, 6)
         }
 
-        # Add neuro-symbolic sub-scores for auditability
-        if used_neuro_symbolic:
-            calculation_factors["structural_score"] = round(structural_score, 6)
-            calculation_factors["semantic_score"] = round(semantic_score, 6)
-            calculation_factors["dataflow_score"] = round(dataflow_score, 6)
-            calculation_factors["complexity_score"] = round(complexity_score, 6)
-            calculation_factors["synthesis_weights"] = {
-                "structural": w_struct,
-                "semantic": w_semantic,
-                "dataflow": w_dataflow,
-                "complexity": w_complexity
-            }
+        calculation_factors = {
+            "lifespan_time_multiplier": round(lifespan_mult, 6),
+            "diff_score": round(diff_score, 6),
+            "diff_score_calculation_factors": diff_score_calculation_factors
+        }
 
         commit_obj = {
             "commit_hash": commit_hash,
             "commit_description": commit_desc,
             "commit_date": commit_date,
-            "scores": {
-                "diff_score": round(diff_score, 6),
-                "lifespan_time_multiplier": round(lifespan_mult, 6),
+            "impact": {
+                "final_impact_score": round(final_impact, 6),
                 "calculation_factors": calculation_factors
             }
         }
@@ -294,10 +281,6 @@ def node_5_mapper(state):
         if obj_id in mapping_dict:
             # ── Active method: accumulate impact ─────────────────────
             target = mapping_dict[obj_id]
-            target["hit_count"] += 1
-            if not target["first_seen_date"]:
-                target["first_seen_date"] = commit_date
-            target["last_seen_date"] = commit_date
             target["commits"].append(commit_obj)
             target["impact_score"] += final_impact
 
@@ -345,6 +328,19 @@ def node_5_mapper(state):
 
     # Flatten the mapping_dict to a list before passing to Node 6
     final_census = list(mapping_dict.values())
+
+    # ── Final Cleanup ──
+    for entry in final_census:
+        for k in ["first_seen_date", "last_seen_date", "hit_count"]:
+            entry.pop(k, None)
+        if not entry.get("commits"):
+            entry.pop("is_dead_code", None)
+            entry.pop("raw_complexity_score", None)
+            
+        # Move 'commits' to the end for cosmetic ordering
+        if "commits" in entry:
+            commits_val = entry.pop("commits")
+            entry["commits"] = commits_val
 
     output_state = {
         "census_entries": final_census,
