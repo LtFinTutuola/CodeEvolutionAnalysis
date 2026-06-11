@@ -14,11 +14,20 @@ Responsibilities:
   legacy_impact_score on the parent_object.
 - Per-commit auditability: each commit entry stores a 'scores' sub-object with
   diff_score and lifespan_time_multiplier.
+
+Neuro-Symbolic Engine Integration:
+- For modifications (NOT is_new_or_dead, is_signature_change, is_field_modification),
+  the diff_score is synthesized from 4 weighted dimensions:
+    D_structural (GumTree), D_semantic (CodeBERT), D_dataflow (Tree-Sitter), D_complexity
+- The convex weights are configurable in config.yaml under neuro_symbolic_weights.
+- Sub-scores are logged to calculation_factors for full auditability.
 """
 
 from datetime import datetime
 from src.utils import logger, audit_snapshot
 from src.nodes.node_1b_baseline_manager import get_project_name
+from src.nodes.dataflow_tracer import DataFlowTracer
+from src.nodes.neural_semantic_engine import NeuralSemanticEngine
 
 
 def _parse_date(date_str):
@@ -81,6 +90,33 @@ def calculate_time_multiplier(commit_date_str, repo_first_date_str, repo_last_da
     return lifespan_decay
 
 
+def _load_neuro_symbolic_weights(config):
+    """
+    Load and validate the neuro-symbolic convex weights from config.
+
+    Returns:
+        tuple: (w_structural, w_semantic, w_dataflow, w_complexity)
+    """
+    weights_config = config.get("neuro_symbolic_weights", {})
+    w_structural = float(weights_config.get("structural", 0.40))
+    w_semantic = float(weights_config.get("semantic", 0.25))
+    w_dataflow = float(weights_config.get("dataflow", 0.20))
+    w_complexity = float(weights_config.get("complexity", 0.15))
+
+    total = w_structural + w_semantic + w_dataflow + w_complexity
+    if abs(total - 1.0) > 0.001:
+        logger.error(
+            f"Neuro-symbolic weights do not sum to 1.0 (sum={total:.4f}). "
+            f"Normalizing to maintain convex combination."
+        )
+        w_structural /= total
+        w_semantic /= total
+        w_dataflow /= total
+        w_complexity /= total
+
+    return w_structural, w_semantic, w_dataflow, w_complexity
+
+
 def node_5_mapper(state):
     logger.info("=" * 60)
     logger.info("NODE 5: Mapper (Overlay, Time Decay & Impact Scoring)")
@@ -102,6 +138,17 @@ def node_5_mapper(state):
     logger.info(f"Loaded {len(parsed_hunks)} historical diff hunks.")
     logger.info(f"Repo temporal boundaries: first={repo_first_date}, last={repo_last_date}")
 
+    # ── Load Neuro-Symbolic weights ──────────────────────────────────────
+    w_struct, w_semantic, w_dataflow, w_complexity = _load_neuro_symbolic_weights(config)
+    logger.info(
+        f"Neuro-symbolic weights: structural={w_struct:.2f}, semantic={w_semantic:.2f}, "
+        f"dataflow={w_dataflow:.2f}, complexity={w_complexity:.2f}"
+    )
+
+    # ── Initialize Neuro-Symbolic engines (lazy singletons) ──────────────
+    dataflow_tracer = DataFlowTracer.get_instance()
+    neural_engine = NeuralSemanticEngine.get_instance()
+
     # ── Convert Baseline to O(1) lookup dictionary ───────────────────────
     mapping_dict = {}
     for obj in baseline_objects:
@@ -114,7 +161,10 @@ def node_5_mapper(state):
     global_legacy_commits = {}
 
     # ── Process hunks chronologically ────────────────────────────────────
-    for hunk in parsed_hunks:
+    for i, hunk in enumerate(parsed_hunks):
+        if i % 50 == 0 and i > 0:
+            logger.info(f"  Neural Semantic Mapper progress: {i}/{len(parsed_hunks)} hunks processed...")
+
         obj_id = hunk["logical_object"]
         commit_hash = hunk["commit_hash"]
         commit_date = hunk["commit_date"]
@@ -122,6 +172,13 @@ def node_5_mapper(state):
         file_path = hunk["file_path"]
         parent_obj = hunk["parent_object"]
         diff_score = hunk.get("diff_score", 0.0)
+
+        # ── Neuro-Symbolic sub-scores (defaults) ─────────────────
+        structural_score = hunk.get("structural_score", diff_score)
+        semantic_score = 0.0
+        dataflow_score = 0.0
+        complexity_score = 0.0
+        used_neuro_symbolic = False
 
         # ── Apply Signature Change scoring ───────────────────────
         if hunk.get("is_signature_change", False):
@@ -146,6 +203,43 @@ def node_5_mapper(state):
                 scale_factor = min(1.0, float(raw_score) / max(1.0, float(specific_threshold)))
                 
                 diff_score = base_score + (scale_factor * (1.0 - base_score))
+        else:
+            # ── Neuro-Symbolic Engine: synthesize from 4 dimensions ──
+            clean_old = hunk.get("clean_old", "")
+            clean_new = hunk.get("clean_new", "")
+
+            # D_structural: already computed by Roslyn (GumTree)
+            structural_score = hunk.get("structural_score", diff_score)
+
+            # D_semantic: CodeBERT cosine divergence
+            if clean_old and clean_new:
+                semantic_score = neural_engine.compute_semantic_divergence(clean_old, clean_new)
+            
+            # D_dataflow: Tree-Sitter Jaccard distance
+            if clean_old and clean_new:
+                dataflow_score = dataflow_tracer.compute_dataflow_divergence(clean_old, clean_new)
+
+            # D_complexity: normalized complexity delta
+            old_complexity = hunk.get("raw_complexity_score", 0)
+            # For modifications, compute new complexity from new code's raw score
+            # The raw_complexity_score from Roslyn is only set for new_or_dead entries,
+            # so for modifications we approximate from the structural data
+            new_complexity = old_complexity  # default: no change
+            if clean_old != clean_new and structural_score > 0:
+                # Approximate complexity change from the structural score
+                complexity_score = min(1.0, structural_score * 0.5)
+            else:
+                complexity_score = 0.0
+
+            # ── Convex synthesis ──────────────────────────────────
+            diff_score = (
+                w_struct * structural_score +
+                w_semantic * semantic_score +
+                w_dataflow * dataflow_score +
+                w_complexity * complexity_score
+            )
+            diff_score = round(max(0.0, min(1.0, diff_score)), 6)
+            used_neuro_symbolic = True
 
 
         # Ensure the project field is resolved dynamically
@@ -160,6 +254,30 @@ def node_5_mapper(state):
         final_impact = diff_score * lifespan_mult
 
         # ── Build per-commit auditability scores ─────────────────────
+        calculation_factors = {
+            "raw_complexity_score": hunk.get("raw_complexity_score", 0),
+            "added_lines": hunk.get("added_lines", 0),
+            "removed_lines": hunk.get("removed_lines", 0),
+            "is_new_or_dead": hunk.get("is_new_or_dead", False),
+            "is_signature_change": hunk.get("is_signature_change", False),
+            "is_field_modification": hunk.get("is_field_modification", False),
+            "object_type": hunk.get("object_type", "method"),
+            "final_impact": round(final_impact, 6)
+        }
+
+        # Add neuro-symbolic sub-scores for auditability
+        if used_neuro_symbolic:
+            calculation_factors["structural_score"] = round(structural_score, 6)
+            calculation_factors["semantic_score"] = round(semantic_score, 6)
+            calculation_factors["dataflow_score"] = round(dataflow_score, 6)
+            calculation_factors["complexity_score"] = round(complexity_score, 6)
+            calculation_factors["synthesis_weights"] = {
+                "structural": w_struct,
+                "semantic": w_semantic,
+                "dataflow": w_dataflow,
+                "complexity": w_complexity
+            }
+
         commit_obj = {
             "commit_hash": commit_hash,
             "commit_description": commit_desc,
@@ -167,16 +285,7 @@ def node_5_mapper(state):
             "scores": {
                 "diff_score": round(diff_score, 6),
                 "lifespan_time_multiplier": round(lifespan_mult, 6),
-                "calculation_factors": {
-                    "raw_complexity_score": hunk.get("raw_complexity_score", 0),
-                    "added_lines": hunk.get("added_lines", 0),
-                    "removed_lines": hunk.get("removed_lines", 0),
-                    "is_new_or_dead": hunk.get("is_new_or_dead", False),
-                    "is_signature_change": hunk.get("is_signature_change", False),
-                    "is_field_modification": hunk.get("is_field_modification", False),
-                    "object_type": hunk.get("object_type", "method"),
-                    "final_impact": round(final_impact, 6)
-                }
+                "calculation_factors": calculation_factors
             }
         }
 

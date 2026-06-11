@@ -428,174 +428,370 @@ namespace SemanticMapper
             return Convert.ToHexString(hashBytes);
         }
 
-        // ── TSED: Zhang-Shasha Tree Edit Distance (Phase 2.3) ──────────────
+        // ── GumTree Structural Diffing (Phase 2.3) ─────────────────────────
 
         /// <summary>
-        /// A node in the flattened postorder representation of an AST,
-        /// used as input for the Zhang-Shasha algorithm.
+        /// Edit operation types produced by the GumTree matcher.
         /// </summary>
-        private struct TsedNode
+        private enum EditType { Match, Insert, Delete, Update, Move }
+
+        /// <summary>
+        /// A single edit operation in the GumTree edit script.
+        /// </summary>
+        private struct EditOp
         {
-            public string Label;          // SyntaxKind name (e.g., "MethodDeclaration", "IfStatement")
-            public int LeftmostLeaf;      // Index of the leftmost leaf descendant (1-indexed in postorder)
-            public int ChildrenCount;
+            public EditType Type;
+            public SyntaxNode? OldNode;
+            public SyntaxNode? NewNode;
         }
 
         /// <summary>
-        /// Flatten a Roslyn SyntaxNode tree into a postorder-indexed array
-        /// suitable for Zhang-Shasha computation.
-        /// Labels are SyntaxKind names; string literals are already masked.
+        /// Lightweight representation of a syntax node for hashing and comparison.
         /// </summary>
-        private static List<TsedNode> FlattenToPostorder(SyntaxNode root)
+        private struct GumTreeNode
         {
-            var result = new List<TsedNode>();
-            var leftmostLeaves = new Dictionary<SyntaxNode, int>();
-            PostorderTraverse(root, result, leftmostLeaves);
-            return result;
+            public SyntaxNode Node;
+            public string Label;       // SyntaxKind name
+            public int Height;         // Height in the AST
+            public string SubtreeHash; // SHA-256 of the normalized subtree
         }
 
-        private static void PostorderTraverse(
-            SyntaxNode node,
-            List<TsedNode> result,
-            Dictionary<SyntaxNode, int> leftmostLeaves)
+        /// <summary>
+        /// Compute the height of a syntax node (longest path to a leaf).
+        /// </summary>
+        private static int ComputeHeight(SyntaxNode node)
         {
             var children = node.ChildNodes().ToList();
-
-            foreach (var child in children)
-            {
-                PostorderTraverse(child, result, leftmostLeaves);
-            }
-
-            // This node's postorder index (1-based)
-            int myIndex = result.Count + 1;
-
-            // Leftmost leaf: if leaf node, it's itself; otherwise, inherit from first child
-            int leftmostLeaf;
-            if (children.Count == 0)
-            {
-                leftmostLeaf = myIndex;
-            }
-            else
-            {
-                leftmostLeaf = leftmostLeaves[children[0]];
-            }
-
-            leftmostLeaves[node] = leftmostLeaf;
-
-            result.Add(new TsedNode
-            {
-                Label = node.Kind().ToString(),
-                LeftmostLeaf = leftmostLeaf,
-                ChildrenCount = children.Count
-            });
+            if (children.Count == 0) return 1;
+            return 1 + children.Max(c => ComputeHeight(c));
         }
 
         /// <summary>
-        /// Compute the Zhang-Shasha Tree Edit Distance between two postorder-flattened trees.
-        /// Insert/delete/relabel costs are all 1.
-        /// Returns the raw edit distance (unnormalized integer).
+        /// Compute a deterministic hash for a subtree for identity comparison.
+        /// Uses SyntaxKind labels only (structure-based, not content-based).
         /// </summary>
-        private static int ZhangShashaDistance(List<TsedNode> t1, List<TsedNode> t2)
+        private static string ComputeSubtreeStructureHash(SyntaxNode node)
         {
-            int m = t1.Count;
-            int n = t2.Count;
+            var sb = new StringBuilder();
+            BuildStructureString(node, sb);
+            using var sha = SHA256.Create();
+            var bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(sb.ToString()));
+            return Convert.ToHexString(bytes);
+        }
 
-            if (m == 0) return n;
-            if (n == 0) return m;
-
-            // Identify key roots: nodes i where l(i) != l(parent(i))
-            // In postorder, key roots are nodes whose leftmost leaf index differs from parent's
-            var keyRoots1 = GetKeyRoots(t1);
-            var keyRoots2 = GetKeyRoots(t2);
-
-            // Tree distance matrix (1-indexed)
-            var td = new int[m + 1, n + 1];
-
-            foreach (var i in keyRoots1)
+        private static void BuildStructureString(SyntaxNode node, StringBuilder sb)
+        {
+            sb.Append(node.Kind().ToString());
+            sb.Append('(');
+            foreach (var child in node.ChildNodes())
             {
-                foreach (var j in keyRoots2)
+                BuildStructureString(child, sb);
+                sb.Append(',');
+            }
+            sb.Append(')');
+        }
+
+        /// <summary>
+        /// Build a lookup of GumTreeNode info for all nodes in a tree.
+        /// </summary>
+        private static Dictionary<SyntaxNode, GumTreeNode> BuildNodeMap(SyntaxNode root)
+        {
+            var map = new Dictionary<SyntaxNode, GumTreeNode>();
+            foreach (var node in root.DescendantNodesAndSelf())
+            {
+                map[node] = new GumTreeNode
                 {
-                    ComputeForestDistance(t1, t2, i, j, td);
+                    Node = node,
+                    Label = node.Kind().ToString(),
+                    Height = ComputeHeight(node),
+                    SubtreeHash = ComputeSubtreeStructureHash(node)
+                };
+            }
+            return map;
+        }
+
+        /// <summary>
+        /// GumTree Phase 1: Top-Down Greedy Subtree Matching.
+        /// Matches entire subtrees that are structurally identical (same hash)
+        /// starting from the largest subtrees down to minHeight.
+        /// </summary>
+        private static Dictionary<SyntaxNode, SyntaxNode> TopDownMatch(
+            SyntaxNode oldRoot, SyntaxNode newRoot,
+            Dictionary<SyntaxNode, GumTreeNode> oldMap,
+            Dictionary<SyntaxNode, GumTreeNode> newMap,
+            int minHeight = 2)
+        {
+            var matched = new Dictionary<SyntaxNode, SyntaxNode>();
+            var matchedNew = new HashSet<SyntaxNode>();
+
+            // Build hash → nodes index for the new tree
+            var newHashIndex = new Dictionary<string, List<SyntaxNode>>();
+            foreach (var kvp in newMap)
+            {
+                if (!newHashIndex.ContainsKey(kvp.Value.SubtreeHash))
+                    newHashIndex[kvp.Value.SubtreeHash] = new List<SyntaxNode>();
+                newHashIndex[kvp.Value.SubtreeHash].Add(kvp.Key);
+            }
+
+            // Process old nodes in decreasing height order (largest subtrees first)
+            var oldNodesByHeight = oldMap.Values
+                .Where(n => n.Height >= minHeight)
+                .OrderByDescending(n => n.Height)
+                .ToList();
+
+            foreach (var oldInfo in oldNodesByHeight)
+            {
+                // Skip if already matched as part of a larger subtree
+                if (matched.ContainsKey(oldInfo.Node)) continue;
+
+                if (newHashIndex.TryGetValue(oldInfo.SubtreeHash, out var candidates))
+                {
+                    // Find the best unmatched candidate (prefer same label, then closest position)
+                    SyntaxNode? bestMatch = null;
+                    foreach (var candidate in candidates)
+                    {
+                        if (matchedNew.Contains(candidate)) continue;
+                        if (newMap[candidate].Label != oldInfo.Label) continue;
+                        bestMatch = candidate;
+                        break;
+                    }
+
+                    if (bestMatch != null)
+                    {
+                        // Match entire subtrees
+                        MatchSubtrees(oldInfo.Node, bestMatch, matched, matchedNew, oldMap, newMap);
+                    }
                 }
             }
 
-            return td[m, n];
+            return matched;
         }
 
-        private static List<int> GetKeyRoots(List<TsedNode> tree)
+        /// <summary>
+        /// Recursively match all nodes in two structurally identical subtrees.
+        /// </summary>
+        private static void MatchSubtrees(
+            SyntaxNode oldNode, SyntaxNode newNode,
+            Dictionary<SyntaxNode, SyntaxNode> matched,
+            HashSet<SyntaxNode> matchedNew,
+            Dictionary<SyntaxNode, GumTreeNode> oldMap,
+            Dictionary<SyntaxNode, GumTreeNode> newMap)
         {
-            int size = tree.Count;
-            // A key root is a node whose leftmostLeaf value is unique among ancestors
-            // Simple approach: collect nodes with unique leftmostLeaf values,
-            // keeping the one with the highest index (deepest ancestor in postorder)
-            var lmlToMaxIndex = new Dictionary<int, int>();
-            for (int i = 0; i < size; i++)
+            if (matched.ContainsKey(oldNode) || matchedNew.Contains(newNode)) return;
+
+            matched[oldNode] = newNode;
+            matchedNew.Add(newNode);
+
+            var oldChildren = oldNode.ChildNodes().ToList();
+            var newChildren = newNode.ChildNodes().ToList();
+
+            int minCount = Math.Min(oldChildren.Count, newChildren.Count);
+            for (int i = 0; i < minCount; i++)
             {
-                int lml = tree[i].LeftmostLeaf;
-                lmlToMaxIndex[lml] = i + 1; // 1-indexed
+                MatchSubtrees(oldChildren[i], newChildren[i], matched, matchedNew, oldMap, newMap);
             }
-            var roots = lmlToMaxIndex.Values.ToList();
-            roots.Sort();
-            return roots;
         }
 
-        private static void ComputeForestDistance(
-            List<TsedNode> t1, List<TsedNode> t2,
-            int i, int j, int[,] td)
+        /// <summary>
+        /// GumTree Phase 2: Bottom-Up Recovery Matching.
+        /// For each unmatched old node, find the best unmatched new node using
+        /// a Dice coefficient on the already-matched descendants.
+        /// </summary>
+        private static void BottomUpMatch(
+            SyntaxNode oldRoot, SyntaxNode newRoot,
+            Dictionary<SyntaxNode, SyntaxNode> matched,
+            Dictionary<SyntaxNode, GumTreeNode> oldMap,
+            Dictionary<SyntaxNode, GumTreeNode> newMap,
+            double minDice = 0.25)
         {
-            int li = t1[i - 1].LeftmostLeaf;
-            int lj = t2[j - 1].LeftmostLeaf;
+            var matchedNewSet = new HashSet<SyntaxNode>(matched.Values);
 
-            // Forest distance matrix for this subproblem
-            var fd = new int[i - li + 2, j - lj + 2];
+            // Process unmatched old nodes in bottom-up order (leaves first)
+            var unmatchedOld = oldRoot.DescendantNodesAndSelf()
+                .Where(n => !matched.ContainsKey(n))
+                .OrderBy(n => oldMap.ContainsKey(n) ? oldMap[n].Height : 0)
+                .ToList();
 
-            fd[0, 0] = 0;
-            for (int x = 1; x <= i - li + 1; x++)
-                fd[x, 0] = fd[x - 1, 0] + 1; // delete cost
-            for (int y = 1; y <= j - lj + 1; y++)
-                fd[0, y] = fd[0, y - 1] + 1; // insert cost
-
-            for (int x = li; x <= i; x++)
+            foreach (var oldNode in unmatchedOld)
             {
-                for (int y = lj; y <= j; y++)
+                if (matched.ContainsKey(oldNode)) continue;
+                if (!oldMap.ContainsKey(oldNode)) continue;
+
+                var oldLabel = oldMap[oldNode].Label;
+
+                // Find candidate new nodes with the same label
+                var candidates = newRoot.DescendantNodesAndSelf()
+                    .Where(n => !matchedNewSet.Contains(n) &&
+                                newMap.ContainsKey(n) &&
+                                newMap[n].Label == oldLabel)
+                    .ToList();
+
+                SyntaxNode? bestCandidate = null;
+                double bestDice = minDice;
+
+                foreach (var candidate in candidates)
                 {
-                    int xIdx = x - li + 1;
-                    int yIdx = y - lj + 1;
-
-                    int lx = t1[x - 1].LeftmostLeaf;
-                    int ly = t2[y - 1].LeftmostLeaf;
-
-                    if (lx == li && ly == lj)
+                    double dice = ComputeDiceCoefficient(oldNode, candidate, matched);
+                    if (dice > bestDice)
                     {
-                        // Both are in the same "subtree alignment"
-                        int renameCost = t1[x - 1].Label == t2[y - 1].Label ? 0 : 1;
-                        fd[xIdx, yIdx] = Math.Min(
-                            Math.Min(
-                                fd[xIdx - 1, yIdx] + 1,      // delete
-                                fd[xIdx, yIdx - 1] + 1),     // insert
-                            fd[xIdx - 1, yIdx - 1] + renameCost // relabel
-                        );
-                        td[x, y] = fd[xIdx, yIdx];
+                        bestDice = dice;
+                        bestCandidate = candidate;
                     }
-                    else
-                    {
-                        // Use previously computed tree distance
-                        int tdX = lx - 1;
-                        int tdY = ly - 1;
-                        fd[xIdx, yIdx] = Math.Min(
-                            Math.Min(
-                                fd[xIdx - 1, yIdx] + 1,
-                                fd[xIdx, yIdx - 1] + 1),
-                            fd[lx - li, ly - lj] + td[x, y]
-                        );
-                    }
+                }
+
+                if (bestCandidate != null)
+                {
+                    matched[oldNode] = bestCandidate;
+                    matchedNewSet.Add(bestCandidate);
                 }
             }
         }
 
         /// <summary>
-        /// Calculate the TSED-based diff_score between two AST nodes.
-        /// Applies string masking, hash short-circuit, and Zhang-Shasha.
+        /// Compute the Dice coefficient between two nodes based on their
+        /// already-matched descendants.
+        /// Dice = 2 * |matched_descendants| / (|old_descendants| + |new_descendants|)
+        /// </summary>
+        private static double ComputeDiceCoefficient(
+            SyntaxNode oldNode, SyntaxNode newNode,
+            Dictionary<SyntaxNode, SyntaxNode> matched)
+        {
+            var oldDescendants = oldNode.DescendantNodesAndSelf().ToHashSet();
+            var newDescendants = newNode.DescendantNodesAndSelf().ToHashSet();
+
+            int matchedCount = 0;
+            foreach (var od in oldDescendants)
+            {
+                if (matched.TryGetValue(od, out var mn) && newDescendants.Contains(mn))
+                    matchedCount++;
+            }
+
+            int total = oldDescendants.Count + newDescendants.Count;
+            if (total == 0) return 0.0;
+
+            return (2.0 * matchedCount) / total;
+        }
+
+        /// <summary>
+        /// Detect move operations: a node is considered "moved" if it is matched
+        /// but its parent in the old tree is matched to a different node than
+        /// the parent of its match in the new tree.
+        /// </summary>
+        private static bool IsMove(
+            SyntaxNode oldNode, SyntaxNode newNode,
+            Dictionary<SyntaxNode, SyntaxNode> matched)
+        {
+            var oldParent = oldNode.Parent;
+            var newParent = newNode.Parent;
+
+            if (oldParent == null || newParent == null) return false;
+
+            // If old parent is matched to something other than new parent → move
+            if (matched.TryGetValue(oldParent, out var matchedParent))
+            {
+                return matchedParent != newParent;
+            }
+
+            // If old parent is unmatched but new parent is matched → move
+            return true;
+        }
+
+        /// <summary>
+        /// Generate the complete edit script from the GumTree matching.
+        /// Classifies every node into: Match, Insert, Delete, Update, or Move.
+        /// </summary>
+        private static List<EditOp> GenerateEditScript(
+            SyntaxNode oldRoot, SyntaxNode newRoot,
+            Dictionary<SyntaxNode, SyntaxNode> matched,
+            Dictionary<SyntaxNode, GumTreeNode> oldMap,
+            Dictionary<SyntaxNode, GumTreeNode> newMap)
+        {
+            var ops = new List<EditOp>();
+            var matchedNewSet = new HashSet<SyntaxNode>(matched.Values);
+
+            // Process matched pairs: Match, Update, or Move
+            foreach (var kvp in matched)
+            {
+                var oldNode = kvp.Key;
+                var newNode = kvp.Value;
+
+                bool labelChanged = oldMap.ContainsKey(oldNode) && newMap.ContainsKey(newNode) &&
+                                    oldMap[oldNode].Label != newMap[newNode].Label;
+
+                if (labelChanged)
+                {
+                    ops.Add(new EditOp { Type = EditType.Update, OldNode = oldNode, NewNode = newNode });
+                }
+                else if (IsMove(oldNode, newNode, matched))
+                {
+                    ops.Add(new EditOp { Type = EditType.Move, OldNode = oldNode, NewNode = newNode });
+                }
+                else
+                {
+                    ops.Add(new EditOp { Type = EditType.Match, OldNode = oldNode, NewNode = newNode });
+                }
+            }
+
+            // Deleted nodes: in old tree but not matched
+            foreach (var oldNode in oldRoot.DescendantNodesAndSelf())
+            {
+                if (!matched.ContainsKey(oldNode))
+                {
+                    ops.Add(new EditOp { Type = EditType.Delete, OldNode = oldNode });
+                }
+            }
+
+            // Inserted nodes: in new tree but not matched to anything
+            foreach (var newNode in newRoot.DescendantNodesAndSelf())
+            {
+                if (!matchedNewSet.Contains(newNode))
+                {
+                    ops.Add(new EditOp { Type = EditType.Insert, NewNode = newNode });
+                }
+            }
+
+            return ops;
+        }
+
+        /// <summary>
+        /// Calculate the GumTree-based structural distance between two AST nodes.
+        /// Returns a normalized score ∈ [0, 1]:
+        ///   0.0 = identical trees, 1.0 = entirely different trees.
+        /// 
+        /// Formula: D = (|Insert| + |Delete| + |Update| + 0.5 × |Move|) / (|T1| + |T2|)
+        /// Move operations weighted at 0.5 because moves are structural reorganization,
+        /// not destructive changes.
+        /// </summary>
+        private static double CalculateStructuralDistance(SyntaxNode maskedOld, SyntaxNode maskedNew)
+        {
+            var oldMap = BuildNodeMap(maskedOld);
+            var newMap = BuildNodeMap(maskedNew);
+
+            // Phase 1: Top-Down Greedy Matching
+            var matched = TopDownMatch(maskedOld, maskedNew, oldMap, newMap);
+
+            // Phase 2: Bottom-Up Recovery
+            BottomUpMatch(maskedOld, maskedNew, matched, oldMap, newMap);
+
+            // Generate edit script
+            var editScript = GenerateEditScript(maskedOld, maskedNew, matched, oldMap, newMap);
+
+            // Count operations
+            int inserts = editScript.Count(e => e.Type == EditType.Insert);
+            int deletes = editScript.Count(e => e.Type == EditType.Delete);
+            int updates = editScript.Count(e => e.Type == EditType.Update);
+            int moves = editScript.Count(e => e.Type == EditType.Move);
+
+            int totalNodes = oldMap.Count + newMap.Count;
+            if (totalNodes == 0) return 0.0;
+
+            double distance = (inserts + deletes + updates + 0.5 * moves) / totalNodes;
+            return Math.Min(1.0, Math.Max(0.0, distance));
+        }
+
+        /// <summary>
+        /// Calculate the GumTree-based structural diff_score between two AST nodes.
+        /// Applies string masking, hash short-circuit, and GumTree structural diffing.
         /// Returns a normalized score ∈ [0, 1]:
         ///   0.0 = identical trees, 1.0 = entirely different trees.
         /// 
@@ -603,37 +799,45 @@ namespace SemanticMapper
         ///   - Both null → 0.0
         ///   - One null (pure creation/deletion) → 1.0
         ///   - Same AST hash (handles method reordering within file) → 0.0
+        /// 
+        /// Also outputs the old/new AST hashes for downstream use.
         /// </summary>
-        private static double CalculateDiffScore(SyntaxNode? oldNode, SyntaxNode? newNode)
+        private static double CalculateDiffScore(SyntaxNode? oldNode, SyntaxNode? newNode,
+            out string hashOld, out string hashNew)
         {
+            hashOld = "";
+            hashNew = "";
+
             // Both null: no change
             if (oldNode == null && newNode == null) return 0.0;
 
             // Pure creation or pure deletion
-            if (oldNode == null || newNode == null) return 1.0;
+            if (oldNode == null || newNode == null)
+            {
+                hashOld = ComputeAstHash(oldNode);
+                hashNew = ComputeAstHash(newNode);
+                return 1.0;
+            }
 
             // Mask string literals and cosmetic changes before comparison
             var maskedOld = MaskAst(oldNode);
             var maskedNew = MaskAst(newNode);
 
             // Hash short-circuit: identical masked ASTs → 0.0
-            string hashOld = ComputeAstHash(oldNode);
-            string hashNew = ComputeAstHash(newNode);
+            hashOld = ComputeAstHash(oldNode);
+            hashNew = ComputeAstHash(newNode);
             if (hashOld == hashNew) return 0.0;
 
-            // Full TSED calculation
-            var tree1 = FlattenToPostorder(maskedOld);
-            var tree2 = FlattenToPostorder(maskedNew);
+            // Full GumTree structural diffing
+            return CalculateStructuralDistance(maskedOld, maskedNew);
+        }
 
-            if (tree1.Count == 0 && tree2.Count == 0) return 0.0;
-            if (tree1.Count == 0 || tree2.Count == 0) return 1.0;
-
-            int editDistance = ZhangShashaDistance(tree1, tree2);
-            int maxSize = Math.Max(tree1.Count, tree2.Count);
-
-            // Normalize to [0, 1]
-            double score = (double)editDistance / maxSize;
-            return Math.Min(1.0, Math.Max(0.0, score));
+        /// <summary>
+        /// Backward-compatible overload without hash output parameters.
+        /// </summary>
+        private static double CalculateDiffScore(SyntaxNode? oldNode, SyntaxNode? newNode)
+        {
+            return CalculateDiffScore(oldNode, newNode, out _, out _);
         }
 
         // ── Cognitive Complexity ─────────────────────────────────────────────
@@ -899,7 +1103,7 @@ namespace SemanticMapper
 
         /// <summary>
         /// Process a CENSUS_EXTRACT command: match old/new semantic nodes,
-        /// return fully-qualified signatures, sanitized code pairs, and TSED diff_score.
+        /// return fully-qualified signatures, sanitized code pairs, and GumTree diff_score.
         /// 
         /// Method reordering robustness: Methods are matched by GetLocalIdentity
         /// (name + parameter types), not by position. If a method is merely moved
@@ -941,8 +1145,9 @@ namespace SemanticMapper
                 if (matchedNew != null)
                     processedNewIdentities.Add(localId);
 
-                // Calculate TSED diff_score with masking and short-circuit
+                // Calculate GumTree diff_score with masking and short-circuit
                 double diffScore;
+                string astHashOld = "", astHashNew = "";
                 bool isNewOrDead = (oldNode == null || matchedNew == null);
                 bool isFieldModification = false;
 
@@ -956,10 +1161,12 @@ namespace SemanticMapper
                         isFieldModification = true;
                     }
                     diffScore = isFieldModification ? 1.0 : 0.0;
+                    astHashOld = ComputeAstHash(oldNode);
+                    astHashNew = ComputeAstHash(matchedNew);
                 }
                 else
                 {
-                    diffScore = CalculateDiffScore(oldNode, matchedNew);
+                    diffScore = CalculateDiffScore(oldNode, matchedNew, out astHashOld, out astHashNew);
                 }
 
                 // Signature change detection: if old node has no match in new tree,
@@ -981,6 +1188,9 @@ namespace SemanticMapper
                     sanitized_new_code = StripTrivia(matchedNew),
                     is_logical_change = IsLogicalChange(oldNode, matchedNew),
                     diff_score = diffScore,
+                    structural_score = diffScore,
+                    ast_hash_old = astHashOld,
+                    ast_hash_new = astHashNew,
                     is_new_or_dead = isNewOrDead,
                     is_signature_change = false,
                     is_field_modification = isFieldModification,
@@ -1007,8 +1217,9 @@ namespace SemanticMapper
                             GetLocalIdentity(n) == localId);
                 }
 
-                // Calculate TSED diff_score with masking and short-circuit
+                // Calculate GumTree diff_score with masking and short-circuit
                 double diffScore;
+                string astHashOld = "", astHashNew = "";
                 bool isNewOrDead = (matchedOld == null || newNode == null);
                 bool isFieldModification = false;
 
@@ -1022,10 +1233,12 @@ namespace SemanticMapper
                         isFieldModification = true;
                     }
                     diffScore = isFieldModification ? 1.0 : 0.0;
+                    astHashOld = ComputeAstHash(matchedOld);
+                    astHashNew = ComputeAstHash(newNode);
                 }
                 else
                 {
-                    diffScore = CalculateDiffScore(matchedOld, newNode);
+                    diffScore = CalculateDiffScore(matchedOld, newNode, out astHashOld, out astHashNew);
                 }
                 bool isSignatureChange = false;
 
@@ -1052,6 +1265,9 @@ namespace SemanticMapper
                     sanitized_new_code = StripTrivia(newNode),
                     is_logical_change = IsLogicalChange(matchedOld, newNode),
                     diff_score = diffScore,
+                    structural_score = diffScore,
+                    ast_hash_old = astHashOld,
+                    ast_hash_new = astHashNew,
                     is_new_or_dead = isNewOrDead,
                     is_signature_change = isSignatureChange,
                     is_field_modification = isFieldModification,

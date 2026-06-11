@@ -3,25 +3,36 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 # Target repository settings
-repo_path: ""                        # Absolute path to the target enterprise C# codebase
+repo_path: ""                  # Absolute path to the target enterprise C# codebase
 target_branch: ""              # Branch to analyze (e.g., master, release/8.2)
 
 # History filter
 since_filter: ""        # Git --since value (e.g., "12 months ago", "2024-01-01"), or "-1" for entire history
 
 # Noise gate
-noise_cutoff_threshold: 0           # Minimum changed characters to consider a modification valid
+# Noise cutoff threshold has been removed to preserve Sall changes, relying on diff scoring.
+
+# Files Blacklist
+# List of file path patterns or extensions to ignore during parsing to preserve memory
+files_blacklist:
 
 # Impact scoring
 # (Time decay is calculated using the total lifespan of the repo)
 enable_auto_calibration: true
 complexity_percentile_target: 0.75
+complexity_percentile_target_property: 0.95    # Higher for properties to avoid ceiling distortion
+complexity_percentile_target_constructor: 0.75
 
 min_creation_scores:
   field: 0.15
   property: 0.10
   constructor: 0.05
   method: 0.05
+  field_modification_score: 0.05
+
+# Signature change detection
+signature_changed_diff_score: 0.10             # Diff score when only the signature changed (not the body)
+
 # Output
 output_json_path: ""
 
@@ -30,3 +41,30 @@ target_framework: ""          # .NET target framework for the Roslyn server (e.g
 
 # Logging setting
 produce_log: true                    # If true, produce detailed logs of the collection and discarding operations
+
+# Baseline settings
+scan_codebase: false                # If true, scans the codebase to generate baseline. If false, reads from cache
+baseline_cache_folder: ""       # Directory to cache the baseline JSON
+
+# Audit settings
+audit_mode: true                    # If true, the pipeline will log the snapshot of its internal state to a JSONL log file
+
+# Report generation settings
+report_generation:
+  generate_report: true
+  aggregated_data_file_path: ""
+  code_mapping_file_path: ""
+  cutoff_threshold: 0.05
+  output_folder: "heatmap_reports"
+
+# Neuro-symbolic engine weights (must sum to 1.0)
+# These control the convex combination of four scoring dimensions:
+#   structural: GumTree AST topology changes
+#   semantic:   CodeBERT neural intent divergence
+#   dataflow:   Tree-Sitter data-dependency disruption
+#   complexity: Cognitive complexity delta scoring
+neuro_symbolic_weights:
+  structural: 0.40
+  semantic: 0.25
+  dataflow: 0.20
+  complexity: 0.15
