@@ -181,8 +181,7 @@ def node_6_exporter(state):
     logger.info(f"Aggregated scores exported to: {final_aggregated_path} ({agg_file_size_kb:.1f} KB)")
 
     # ── Impact Score Summary ─────────────────────────────────────────────
-    active_entries = [e for e in census_entries if not e.get("is_dead_code", False)]
-    scored_entries = [e for e in active_entries if e.get("impact_score", 0) > 0]
+    scored_entries = [e for e in census_entries if e.get("impact_score", 0) > 0]
     global_legacy_commits = state.get("global_legacy_commits", {})
     legacy_classes_count = len(global_legacy_commits)
 

@@ -10,8 +10,7 @@ Responsibilities:
 
 import hashlib
 from collections import defaultdict
-from src.utils import get_diff_char_count, calculate_net_lines, logger, audit_snapshot
-
+from src.utils import get_diff_char_count, logger, audit_snapshot
 
 def node_4_semantic_filter(state):
     logger.info("=" * 60)
@@ -20,21 +19,13 @@ def node_4_semantic_filter(state):
 
     config = state["config"]
     parsed_hunks = state["parsed_hunks"]
-    noise_cutoff = config.get("noise_cutoff_threshold", 10)
     logs = state.get("extraction_logs", [])
 
     if not parsed_hunks:
         logger.warning("No parsed hunks to filter.")
         return {"parsed_hunks": []}
 
-    # ── Pass 1: Net Lines Calculation ────────────────────────────────────────
-    logger.info("Pass 1: Calculating net added/removed lines")
-    for hunk in parsed_hunks:
-        added, removed = calculate_net_lines(hunk["clean_old"], hunk["clean_new"])
-        hunk["added_lines"] = added
-        hunk["removed_lines"] = removed
-
-    # Removed Pass 1 snapshot to reduce log size
+    # Pass 1 was Net Lines Calculation, removed as unused overhead.
 
     # ── Pass 2: Move Detection (Anti-Move) ───────────────────────────────────
     logger.info("Pass 2: Move detection (within same commit boundary)")
@@ -125,7 +116,7 @@ def node_4_semantic_filter(state):
 
             logs.append(
                 f"  COLLECTED semantic hunk (kept after move filter): "
-                f"{hunk['logical_object']} in commit {commit_hash} (+{hunk['added_lines']}/-{hunk['removed_lines']})"
+                f"{hunk['logical_object']} in commit {commit_hash}"
             )
             final_hunks.append(hunk)
 

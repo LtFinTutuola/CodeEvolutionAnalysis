@@ -123,7 +123,6 @@ def node_1b_baseline_manager(state):
                     "parent_object": obj["parent_signature"],
                     "project": project,
                     "commits": [],
-                    "is_dead_code": False,
                     "raw_complexity_score": obj.get("raw_complexity_score", 0),
                     "object_type": obj.get("object_type", "method")
                 })

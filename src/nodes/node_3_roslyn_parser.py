@@ -74,17 +74,11 @@ def node_3_roslyn_parser(state):
                 "parent_object": parent_signature,
                 "clean_old": clean_old,
                 "clean_new": clean_new,
-                "is_logical_change": result.get("is_logical_change", False),
                 "diff_score": result.get("diff_score", 0.0),
                 "structural_score": result.get("structural_score", result.get("diff_score", 0.0)),
-                "ast_hash_old": result.get("ast_hash_old", ""),
-                "ast_hash_new": result.get("ast_hash_new", ""),
                 "is_new_or_dead": result.get("is_new_or_dead", False),
-                "is_signature_change": result.get("is_signature_change", False),
-                "is_field_modification": result.get("is_field_modification", False),
                 "raw_complexity_score": result.get("raw_complexity_score", 0),
                 "object_type": result.get("object_type", "method"),
-                "edit_script": result.get("edit_script", []),
             })
 
     logger.info(

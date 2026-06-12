@@ -1159,27 +1159,18 @@ namespace SemanticMapper
 
                 // Calculate GumTree diff_score with masking and short-circuit
                 double diffScore;
-                string astHashOld = "", astHashNew = "";
-                List<NormalizedEditOp> editScript = new List<NormalizedEditOp>();
                 bool isNewOrDead = (oldNode == null || matchedNew == null);
-                bool isFieldModification = false;
 
                 if (!isNewOrDead && oldNode is FieldDeclarationSyntax oldF && matchedNew is FieldDeclarationSyntax newF)
                 {
                     bool typeChanged = oldF.Declaration.Type.ToString() != newF.Declaration.Type.ToString();
                     bool modifiersChanged = oldF.Modifiers.ToString() != newF.Modifiers.ToString();
                     
-                    if (typeChanged || modifiersChanged)
-                    {
-                        isFieldModification = true;
-                    }
-                    diffScore = isFieldModification ? 1.0 : 0.0;
-                    astHashOld = ComputeAstHash(oldNode);
-                    astHashNew = ComputeAstHash(matchedNew);
+                    diffScore = (typeChanged || modifiersChanged) ? 1.0 : 0.0;
                 }
                 else
                 {
-                    diffScore = CalculateDiffScore(oldNode, matchedNew, out astHashOld, out astHashNew, out editScript);
+                    diffScore = CalculateDiffScore(oldNode, matchedNew);
                 }
 
                 // Signature change detection: if old node has no match in new tree,
@@ -1199,15 +1190,8 @@ namespace SemanticMapper
                     parent_signature = GetParentIdentity(oldNode),
                     sanitized_old_code = StripTrivia(oldNode),
                     sanitized_new_code = StripTrivia(matchedNew),
-                    is_logical_change = IsLogicalChange(oldNode, matchedNew),
                     diff_score = diffScore,
                     structural_score = diffScore,
-                    ast_hash_old = astHashOld,
-                    ast_hash_new = astHashNew,
-                    edit_script = editScript,
-                    is_new_or_dead = isNewOrDead,
-                    is_signature_change = false,
-                    is_field_modification = isFieldModification,
                     raw_complexity_score = rawScore,
                     object_type = GetObjectType(oldNode ?? matchedNew!)
                 });
@@ -1233,29 +1217,19 @@ namespace SemanticMapper
 
                 // Calculate GumTree diff_score with masking and short-circuit
                 double diffScore;
-                string astHashOld = "", astHashNew = "";
-                List<NormalizedEditOp> editScript = new List<NormalizedEditOp>();
                 bool isNewOrDead = (matchedOld == null || newNode == null);
-                bool isFieldModification = false;
 
                 if (!isNewOrDead && matchedOld is FieldDeclarationSyntax oldF && newNode is FieldDeclarationSyntax newF)
                 {
                     bool typeChanged = oldF.Declaration.Type.ToString() != newF.Declaration.Type.ToString();
                     bool modifiersChanged = oldF.Modifiers.ToString() != newF.Modifiers.ToString();
                     
-                    if (typeChanged || modifiersChanged)
-                    {
-                        isFieldModification = true;
-                    }
-                    diffScore = isFieldModification ? 1.0 : 0.0;
-                    astHashOld = ComputeAstHash(matchedOld);
-                    astHashNew = ComputeAstHash(newNode);
+                    diffScore = (typeChanged || modifiersChanged) ? 1.0 : 0.0;
                 }
                 else
                 {
-                    diffScore = CalculateDiffScore(matchedOld, newNode, out astHashOld, out astHashNew, out editScript);
+                    diffScore = CalculateDiffScore(matchedOld, newNode);
                 }
-                bool isSignatureChange = false;
 
                 // Signature change detection: if new node has no match in old tree,
                 // check if parent class has the same member count → signature change
@@ -1263,7 +1237,6 @@ namespace SemanticMapper
                 {
                     if (IsSignatureChange(newNode, oldTree))
                     {
-                        isSignatureChange = true;
                         isNewOrDead = false;
                         diffScore = 0.0; // Replaced by signature_changed_diff_score in Python
                     }
@@ -1278,15 +1251,9 @@ namespace SemanticMapper
                     parent_signature = GetParentIdentity(newNode),
                     sanitized_old_code = StripTrivia(matchedOld),
                     sanitized_new_code = StripTrivia(newNode),
-                    is_logical_change = IsLogicalChange(matchedOld, newNode),
                     diff_score = diffScore,
                     structural_score = diffScore,
-                    ast_hash_old = astHashOld,
-                    ast_hash_new = astHashNew,
-                    edit_script = editScript,
                     is_new_or_dead = isNewOrDead,
-                    is_signature_change = isSignatureChange,
-                    is_field_modification = isFieldModification,
                     raw_complexity_score = rawScore,
                     object_type = GetObjectType(matchedOld ?? newNode!)
                 });

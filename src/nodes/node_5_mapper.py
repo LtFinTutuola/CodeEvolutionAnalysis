@@ -331,10 +331,7 @@ def node_5_mapper(state):
 
     # ── Final Cleanup ──
     for entry in final_census:
-        for k in ["first_seen_date", "last_seen_date", "hit_count"]:
-            entry.pop(k, None)
         if not entry.get("commits"):
-            entry.pop("is_dead_code", None)
             entry.pop("raw_complexity_score", None)
             
         # Move 'commits' to the end for cosmetic ordering
